@@ -1,23 +1,29 @@
 # Bommastock — Project Constitution
 
-## 1. Project Overview
+Version: Phase 0 (locked)
 
-Bommastock is a premium digital image marketplace.
+This file is the highest-level project constitution. Implementation must follow it. Detailed schemas, flows, and security rules live in `/docs`. If a lower-level document conflicts with this constitution, stop and resolve the conflict before writing code.
+
+---
+
+# 1. Project Overview
+
+Bommastock is a premium digital image marketplace, similar in concept to established stock-image marketplaces, focused initially on Indian cultural and devotional artwork.
 
 The platform allows:
 
-- Administrators to upload high-resolution images.
-- Administrators to manage image metadata, pricing, categories and licenses.
+- Administrators to upload high-resolution master images.
+- Administrators to manage image metadata, license-based pricing, categories, and licenses.
 - Customers to discover and search images.
 - Customers to preview optimized and watermarked versions.
-- Customers to add images/licenses to a cart.
-- Customers to purchase images.
+- Customers to select a license, add images to a cart, or Buy Now.
+- Customers to purchase images with Razorpay.
 - Customers to securely download purchased high-resolution files.
-- Administrators to manage customers, orders and sales.
+- Administrators to manage customers, orders, downloads, and sales.
 
-The initial version will support a single business/admin account.
+MVP supports a single business with provisioned admin users.
 
-The architecture must allow the platform to evolve into a multi-contributor marketplace in the future.
+The architecture must allow a future multi-contributor marketplace. Do not implement contributor accounts, uploads, moderation, revenue share, or payouts in MVP.
 
 ---
 
@@ -44,107 +50,69 @@ The platform should eventually support many types of digital images.
 
 Bommastock consists of two primary applications.
 
-## 3.1 Customer Storefront
+## 3.1 Customer Storefront (`apps/storefront`)
 
-The customer-facing application allows users to:
+MVP:
 
-- Browse images
+- Browse image gallery
 - Search images
+- Browse categories and subcategories
 - Filter images
 - View image details
-- Preview watermarked images
-- Select licenses
-- Add products to cart
-- Checkout
-- Make payments
-- View purchases
-- Download purchased files
-- Manage profile
-- Manage wishlist
+- View thumbnail and watermarked preview only
+- Select a license
+- Add to cart
+- Buy Now
+- Customer authentication
+- Razorpay checkout
+- Purchase history
+- Secure download of purchased masters
+- Account/profile
 
-## 3.2 Admin Application
+Not in MVP: wishlist, reviews, collections, coupons, subscriptions, credits.
 
-The admin application allows authorized administrators to:
+## 3.2 Admin Application (`apps/admin`)
 
-- Manage images
-- Upload master images
-- Process images
-- Manage metadata
-- Manage categories
-- Manage collections
-- Manage pricing
-- Manage licenses
-- Manage orders
-- Manage customers
-- Manage downloads
-- View sales analytics
-- Manage site content
+MVP:
+
+- Admin authentication
+- Dashboard
+- Upload high-resolution master image
+- Automatic asynchronous image processing
+- Thumbnail, working preview, and watermarked preview generation
+- Metadata, categories/subcategories, tags
+- License management and license-based pricing
+- Publish / unpublish (return to draft) / archive
+- Processing status and failed-processing retry
+- Orders, customers, download records
+- Audit log
+
+Not in MVP: collections CMS, contributor tools, coupons, advanced analytics product, full site CMS.
 
 ---
 
 # 4. Technology Stack
 
-The preferred technology stack is:
+Locked for MVP:
 
-## Frontend
+| Layer | Choice |
+|---|---|
+| Monorepo | pnpm workspaces + Turborepo |
+| Apps | Next.js App Router, React, TypeScript |
+| UI | Tailwind CSS, shadcn/ui in `packages/ui` |
+| Validation | Zod |
+| Database | PostgreSQL (Neon) + Prisma |
+| Auth | Auth.js with Prisma adapter |
+| Storage | Cloudflare R2 (S3-compatible API) |
+| CDN | Cloudflare for public derivatives only |
+| Image processing | Sharp in `packages/image-processing` |
+| Jobs | Asynchronous worker invoked by Inngest |
+| Payments | Razorpay Orders + webhooks |
+| Hosting | Vercel for both apps |
 
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
+Do not use Supabase Auth. Do not use Stripe in MVP. Do not add Elasticsearch, OpenSearch, or Algolia in MVP.
 
-## Backend
-
-- Next.js server-side functionality
-- Server Actions and/or API routes
-- TypeScript
-
-## Database
-
-- PostgreSQL
-- Prisma ORM
-
-## Storage
-
-- Cloudflare R2
-
-Alternative:
-
-- Amazon S3
-
-## Image Processing
-
-- Sharp
-
-## Authentication
-
-Use a secure authentication solution compatible with Next.js.
-
-Preferred options:
-
-- Auth.js
-- Supabase Auth
-
-The final implementation should select one approach and use it consistently.
-
-## Payments
-
-Primary:
-
-- Razorpay
-
-Future:
-
-- Stripe
-
-## Hosting
-
-Preferred:
-
-- Vercel for application
-- Cloudflare R2 for image storage
-- Cloudflare CDN where appropriate
+Storage access uses the S3-compatible API so a future Amazon S3 backend can replace R2 without changing business logic.
 
 ---
 
@@ -166,7 +134,9 @@ Do not place business logic directly inside UI components.
 
 Do not duplicate business logic between Admin and Storefront.
 
-Shared business logic should live in reusable packages/services.
+Shared business logic lives in reusable packages.
+
+Apps may import packages. Packages must not import apps.
 
 ---
 
@@ -174,23 +144,26 @@ Shared business logic should live in reusable packages/services.
 
 The original high-resolution master image must NEVER be publicly accessible.
 
-Master files must be stored in private object storage.
+Logical storage classes:
 
-Example:
+| Class | Key | Access |
+|---|---|---|
+| MASTER | `private/masters/{assetId}/original.{ext}` | Private. Signed URL after verified purchase only. |
+| THUMBNAIL | `public/thumbnails/{assetId}/thumbnail.webp` | Public CDN. Gallery cards. |
+| WATERMARKED_PREVIEW | `public/previews/{assetId}/preview.webp` | Public CDN. Storefront detail pages. |
+| WORKING_PREVIEW | `private/previews/{assetId}/preview.webp` | Private. Admin/processing only. |
 
-private/masters/{assetId}/original.tiff
+Public storefront access is limited to thumbnail and watermarked preview.
 
-Public files may include:
+Never expose:
 
-public/thumbnails/{assetId}/thumbnail.webp
+- master
+- working (unwatermarked) preview
+- original filename as a storage path
+- storage credentials
+- storage object keys to the browser
 
-public/previews/{assetId}/preview.webp
-
-public/watermarked/{assetId}/watermarked.webp
-
-Customers must never receive a permanent URL to the original master file.
-
-Purchased files must be delivered through authenticated temporary signed URLs.
+Customers must never receive a permanent URL to the master. Purchased files are delivered through authenticated temporary signed URLs with a 300-second TTL.
 
 ---
 
@@ -198,44 +171,43 @@ Purchased files must be delivered through authenticated temporary signed URLs.
 
 When an administrator uploads a master image, the system must automatically:
 
-1. Validate the file.
-2. Store the original securely.
-3. Read image metadata.
-4. Generate thumbnail.
-5. Generate optimized preview.
-6. Generate watermarked preview.
-7. Generate WebP/AVIF derivatives when appropriate.
-8. Store derivative files.
-9. Save file metadata to PostgreSQL.
-10. Mark processing status.
-11. Make the product available for publishing.
+1. Validate the file (MIME, extension, magic bytes, size, dimensions, decodability).
+2. Store the original privately in R2 without recompressing it.
+3. Create the Asset record with `processingStatus = UPLOADED` and `productStatus = DRAFT`.
+4. Create an `ImageProcessingJob`.
+5. Process asynchronously (never inside the upload HTTP request).
+6. Extract metadata.
+7. Generate thumbnail.
+8. Generate optimized working preview.
+9. Generate watermarked preview from the working preview.
+10. Store derivatives in R2.
+11. Save file metadata keys to PostgreSQL.
+12. Set `processingStatus = READY` or `FAILED`.
 
-The administrator should not manually create derivatives.
+The administrator must not manually create derivatives.
+
+The administrator may publish only when `processingStatus = READY`.
 
 ---
 
 # 8. Supported Image Formats
 
-Initially support:
+MVP:
 
 - JPEG
 - PNG
 - TIFF
 - WebP
 
-Future support may include:
+Future: AVIF, PSD, RAW, SVG where appropriate.
 
-- AVIF
-- PSD
-- RAW formats
-- SVG where appropriate
+Validation must include MIME type, file extension, file signature, file size, and image dimensions.
 
-The system must validate:
+Configurable MVP limits (enforced in `packages/image-processing`, not in UI):
 
-- MIME type
-- File extension
-- File size
-- Image dimensions
+- Maximum upload size: 512 MiB
+- Maximum longest edge: 20,000 px
+- Maximum megapixels: 250
 
 ---
 
@@ -247,22 +219,23 @@ Master images must:
 - Preserve original quality.
 - Preserve original dimensions.
 - Not be unnecessarily recompressed.
-- Be associated with a product/asset record.
+- Be associated with an Asset record.
 - Be downloadable only after verified purchase.
-- Be delivered using temporary signed URLs.
+- Be delivered using temporary signed URLs (TTL 300 seconds).
 
 ---
 
 # 10. Preview Rules
 
-Public previews should:
+Public previews must:
 
-- Be optimized for web.
+- Be optimized for web (WebP).
 - Be significantly smaller than the master.
-- Include Bommastock watermark.
-- Prevent direct access to the master.
+- Include a Bommastock watermark on the storefront detail preview.
+- Prevent direct access to the master and working preview.
 - Support responsive display.
-- Use modern formats when supported.
+
+Watermark generation lives in `packages/image-processing`. UI components must not apply watermarks.
 
 ---
 
@@ -270,32 +243,23 @@ Public previews should:
 
 PostgreSQL is the source of truth for application data.
 
-Do not store large image binaries inside PostgreSQL.
+Do not store image binaries in PostgreSQL.
 
-Store:
+Store metadata, object keys, users, catalog, orders, payments, licenses, and download records.
 
-- Image metadata
-- Storage keys
-- Product information
-- User information
-- Orders
-- Payments
-- Licenses
-- Download records
+Money is stored as integer minor units: `pricePaise Int`. MVP currency is `INR`. Do not use floating point for money.
 
-Actual image files belong in object storage.
+Historical `OrderItem` price, title, license, tax, and currency snapshots must never change when catalog data changes.
 
 ---
 
 # 12. Payment Security
 
-Never trust payment status received from the client.
+Never trust payment status, price, or order amount received from the client.
 
-Payment status must be verified server-side.
+The server calculates the checkout amount from current `AssetLicense` rows, creates the Razorpay order, and marks the Bommastock order paid only after server-side verification and webhook reconciliation.
 
-Orders should only become completed after successful server-side payment verification.
-
-Payment secrets must never be exposed to frontend code.
+Payment secrets must never be exposed to frontend code. `RAZORPAY_KEY_ID` may be public; `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are server-only.
 
 ---
 
@@ -303,120 +267,57 @@ Payment secrets must never be exposed to frontend code.
 
 Before providing a master download:
 
-1. Authenticate user.
-2. Identify requested asset.
-3. Verify purchase.
-4. Verify payment status.
-5. Verify license.
-6. Generate temporary signed URL.
-7. Log download.
-8. Return download URL.
-
-Signed URLs must expire.
+1. Authenticate the customer.
+2. Identify the asset from the `OrderItem`.
+3. Verify the purchase belongs to the authenticated customer.
+4. Verify payment is captured.
+5. Verify license entitlement on the order line.
+6. Verify the master file exists.
+7. Generate a signed R2 URL (TTL 300 seconds).
+8. Log the download.
+9. Return the temporary URL only.
 
 ---
 
 # 14. UX Principles
 
-Bommastock should feel:
+Bommastock should feel premium, modern, visual, fast, trustworthy, minimal, and professional.
 
-- Premium
-- Modern
-- Visual
-- Fast
-- Trustworthy
-- Minimal
-- Professional
-
-The primary focus is visual discovery.
-
-Images should receive more visual emphasis than text.
+The primary focus is visual discovery. Images receive more visual emphasis than text.
 
 ---
 
 # 15. Responsive Design
 
-The storefront must support:
+Storefront: desktop, laptop, tablet, mobile.
 
-- Desktop
-- Laptop
-- Tablet
-- Mobile
-
-The admin application should support:
-
-- Desktop
-- Laptop
-- Tablet
-
-Mobile admin support is desirable but not mandatory for MVP.
+Admin: desktop, laptop, tablet. Mobile admin is desirable but not mandatory for MVP.
 
 ---
 
 # 16. Accessibility
 
-The application should follow WCAG 2.2 principles.
-
-Requirements include:
-
-- Keyboard navigation
-- Visible focus states
-- Semantic HTML
-- Appropriate color contrast
-- Accessible form labels
-- Accessible error messages
-- Alternative text
-- Screen-reader support
-- Reduced motion support where appropriate
+Follow WCAG 2.2: keyboard navigation, visible focus, semantic HTML, contrast, labels, error messages, alternative text, screen-reader support, reduced motion where appropriate.
 
 ---
 
 # 17. Code Quality
 
-Use:
+Use TypeScript, strong typing, reusable components, modular architecture, clear naming, small functions, consistent error handling.
 
-- TypeScript
-- Strong typing
-- Reusable components
-- Modular architecture
-- Clear naming
-- Small focused functions
-- Consistent error handling
+Avoid `any`, duplicated logic, giant components, hard-coded business rules, hard-coded prices, hard-coded image URLs, and secrets in source code.
 
-Avoid:
-
-- `any`
-- duplicated logic
-- giant components
-- hard-coded business rules
-- hard-coded image URLs
-- secrets in source code
+Prices displayed in the UI are display values. The server is authoritative.
 
 ---
 
 # 18. Environment Variables
 
-Secrets must be stored in environment variables.
+Secrets must be stored in environment variables. Do not commit `.env` files containing secrets.
 
-Examples:
+Categories: database, auth, R2, Razorpay, app URLs, job runner. See `/docs/ARCHITECTURE.md` for the inventory.
 
-DATABASE_URL
-
-R2_ACCOUNT_ID
-
-R2_ACCESS_KEY_ID
-
-R2_SECRET_ACCESS_KEY
-
-R2_BUCKET_NAME
-
-RAZORPAY_KEY_ID
-
-RAZORPAY_KEY_SECRET
-
-AUTH_SECRET
-
-Do not commit `.env` files containing secrets.
+`RAZORPAY_KEY_ID` may be exposed as a public env var for Checkout. All other secrets are server-only.
 
 ---
 
@@ -424,9 +325,7 @@ Do not commit `.env` files containing secrets.
 
 Do not build the entire application in one step.
 
-Implement the system incrementally.
-
-Each feature should:
+Implement incrementally:
 
 1. Understand existing architecture.
 2. Review relevant documentation.
@@ -440,44 +339,92 @@ Each feature should:
 10. Handle empty states.
 11. Document important changes.
 
+After implementation: typecheck, lint, run tests, fix errors before the next feature.
+
+Never claim a feature is complete without verifying the implementation.
+
 ---
 
 # 20. Future Multi-Contributor Architecture
 
-The database should allow future:
+Do not implement in MVP:
 
-- Contributors
+- Contributor accounts
 - Artist profiles
 - Contributor uploads
 - Content moderation
 - Revenue sharing
 - Contributor earnings
 - Contributor dashboards
+- Contributor payouts
 
-Do not implement the full contributor marketplace in MVP unless explicitly requested.
-
-However, avoid architectural decisions that prevent it.
+Avoid schema choices that prevent adding a nullable asset owner and later contributor tables.
 
 ---
 
-# 21. Source of Truth
+# 21. Asset Status Model
 
-The following files are authoritative:
+Two independent fields on Asset:
 
-/docs/PRODUCT_REQUIREMENTS.md
-/docs/ARCHITECTURE.md
-/docs/DATABASE.md
-/docs/DESIGN_SYSTEM.md
-/docs/IMAGE_PIPELINE.md
-/docs/SECURITY.md
-/docs/ADMIN_FLOWS.md
-/docs/CUSTOMER_FLOWS.md
+`processingStatus`: `UPLOADED` | `PROCESSING` | `READY` | `FAILED`
+
+`productStatus`: `DRAFT` | `PUBLISHED` | `ARCHIVED`
+
+Rules:
+
+- New assets start as `processingStatus = UPLOADED`, `productStatus = DRAFT`.
+- Admin may publish only when `processingStatus = READY`.
+- Publish sets `productStatus = PUBLISHED`.
+- Unpublish returns `productStatus` to `DRAFT`.
+- Archive sets `productStatus = ARCHIVED`.
+- Storefront discovery includes only `PUBLISHED` assets with `processingStatus = READY`.
+- Existing purchases remain valid after unpublish or archive.
+
+---
+
+# 22. Pricing Model
+
+MVP uses license-based pricing.
+
+An asset may have one or more licenses through `AssetLicense`.
+
+MVP seeds the `STANDARD` license. Additional licenses (Extended, Editorial, Commercial, Enterprise) may be added later as data, not as UI hard-coding.
+
+The server calculates checkout amounts. `OrderItem` stores an immutable snapshot.
+
+---
+
+# 23. Authentication Model
+
+Auth.js + Prisma adapter. One `User` model. Roles: `CUSTOMER` | `ADMIN`.
+
+- Customer registration/login is public (email and password via Auth.js Credentials).
+- OAuth social login is future scope.
+- Email verification is not required for MVP checkout.
+- There is no public admin registration.
+- Admins are provisioned by a secure seed/bootstrap process.
+- Admin authorization is always enforced server-side.
+
+---
+
+# 24. Source of Truth
+
+Authoritative documents:
+
+- `/docs/PRODUCT_REQUIREMENTS.md`
+- `/docs/ARCHITECTURE.md`
+- `/docs/DATABASE.md`
+- `/docs/DESIGN_SYSTEM.md`
+- `/docs/IMAGE_PIPELINE.md`
+- `/docs/SECURITY.md`
+- `/docs/ADMIN_FLOWS.md`
+- `/docs/CUSTOMER_FLOWS.md`
 
 If implementation conflicts with these documents, review the conflict before changing architecture.
 
 ---
 
-# 22. Cursor Development Rule
+# 25. Cursor Development Rule
 
 Before implementing a feature:
 

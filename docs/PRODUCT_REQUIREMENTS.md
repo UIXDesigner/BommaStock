@@ -1,6 +1,10 @@
 # Bommastock — Product Requirements Document
 
-## 1. Product Name
+Version: Phase 0 (locked)
+
+---
+
+# 1. Product Name
 
 Bommastock
 
@@ -8,15 +12,15 @@ Bommastock
 
 # 2. Product Type
 
-Digital Image Marketplace
+Digital image marketplace.
 
 ---
 
 # 3. Product Vision
 
-Bommastock is a platform where customers can discover, purchase and download high-quality digital images and artwork.
+Bommastock is a platform where customers discover, purchase, and download high-quality digital images and artwork.
 
-The platform should provide a premium visual discovery experience similar in concept to established stock-image marketplaces, while initially focusing on unique Indian artwork and digital assets.
+The experience should feel premium and visual, similar in concept to established stock-image marketplaces, while initially focusing on unique Indian artwork and digital assets.
 
 ---
 
@@ -24,58 +28,31 @@ The platform should provide a premium visual discovery experience similar in con
 
 ## 4.1 Customers
 
-Customers may include:
-
-- Graphic designers
-- Interior designers
-- Printers
-- Marketing agencies
-- Advertising agencies
-- Content creators
-- Businesses
-- Religious organizations
-- Publishers
-- Social media creators
-- Individual consumers
+Customers may include graphic designers, interior designers, printers, marketing and advertising agencies, content creators, businesses, religious organizations, publishers, social media creators, and individual consumers.
 
 ## 4.2 Administrators
 
-Administrators manage:
+Administrators manage assets, categories, tags, licenses, pricing, orders, customers, downloads, and processing.
 
-- Assets
-- Categories
-- Pricing
-- Orders
-- Customers
-- Licenses
-- Collections
-- Content
+Administrators are provisioned. There is no public admin registration.
 
 ## 4.3 Future Contributors
 
-Future users may:
-
-- Upload images
-- Submit assets
-- Track sales
-- Receive revenue share
-- Manage contributor profiles
+Out of MVP. Future users may upload images, submit assets, track sales, receive revenue share, and manage contributor profiles.
 
 ---
 
 # 5. Core Customer Journey
 
-Customer journey:
-
 Home
-→ Search/Browse
-→ Category
+→ Search / Browse / Category
 → Image Gallery
 → Image Details
 → Select License
-→ Add to Cart
-→ Checkout
-→ Payment
+→ Add to Cart or Buy Now
+→ Checkout (authenticated)
+→ Razorpay Payment
+→ Server verification
 → Purchase Confirmation
 → My Purchases
 → Secure Download
@@ -84,195 +61,215 @@ Home
 
 # 6. Core Admin Journey
 
-Admin journey:
-
 Login
 → Dashboard
-→ Upload Asset
+→ Upload master
 → Validate
-→ Process Image
-→ Add Metadata
-→ Set Pricing
-→ Select License
-→ Preview
-→ Publish
+→ Asynchronous processing
+→ Add metadata, category, tags
+→ Attach license and price
+→ Review watermarked preview
+→ Publish (only if processing is READY)
 
 ---
 
 # 7. MVP Features
 
-## Customer
+## 7.1 Customer
 
-- Homepage
+- Homepage (search, categories, newly published images)
 - Image gallery
-- Categories
-- Search
-- Filters
+- Categories and subcategories
+- Search (title, description, tags, category, asset code)
+- Filters (category, orientation, sort by newest)
 - Image detail page
-- Watermarked preview
-- Pricing
+- Thumbnail and watermarked preview
 - License selection
-- Cart
-- Checkout
-- Authentication
-- Payment
+- License-based price display
+- Add to cart
+- Buy Now
+- Customer registration and login (email and password)
+- Account / profile
+- Razorpay checkout
 - Purchase history
-- Secure downloads
+- Secure master download
 
-## Admin
+Cart and checkout require an authenticated customer. Browsing and search do not.
+
+## 7.2 Admin
 
 - Admin login
-- Dashboard
-- Image management
+- Dashboard counts
 - Image upload
-- Automatic processing
+- Automatic asynchronous processing
+- Processing status
+- Failed processing retry
 - Metadata management
-- Category management
-- Pricing management
+- Category / subcategory tree
+- Tags
 - License management
+- License-based pricing
+- Publish / unpublish (return to draft) / archive
 - Order management
 - Customer management
+- Download records
+- Audit log
 
 ---
 
-# 8. Future Features
+# 8. Future Scope
 
-- Wishlist
-- Collections
-- Reviews
+Do not implement in MVP:
+
+- Contributor marketplace, accounts, uploads, moderation, earnings, payouts
 - Coupons
+- Wishlist
+- Reviews
 - Subscriptions
-- Contributor accounts
-- Contributor payouts
-- AI tagging
-- AI descriptions
-- Similar image search
-- Visual search
-- Advanced analytics
-- API access
+- Credits
+- Image bundles
+- AI tagging and AI descriptions
+- Similar image search, visual search, color search
+- Elasticsearch / OpenSearch / Algolia
+- Advanced analytics product
+- Public API
 - Mobile applications
+- Stripe
+- Advanced CMS / collections product
+- Bulk admin operations
 
 ---
 
 # 9. Image Product
 
-Every marketplace image is an Asset/Product.
+Every marketplace image is an Asset.
 
-Each asset should support:
+Each asset has:
 
 - Unique asset ID
-- Image code
+- Unique image code (server-generated, public catalog identifier)
 - Title
 - Description
-- Category
-- Subcategory
+- Category (tree; subcategory is a child category)
 - Tags
-- Price
-- License
-- Dimensions
-- Format
-- File size
-- Preview
-- Thumbnail
-- Master file
-- Status
-- Created date
-- Updated date
+- One or more licenses with prices (`AssetLicense`)
+- Dimensions, orientation, format, file size (from the master)
+- Thumbnail, watermarked preview, working preview, master (as `AssetFile` rows)
+- `processingStatus`
+- `productStatus`
+- Created and updated timestamps
 
 ---
 
-# 10. Product Status
+# 10. Status Model
 
-Possible statuses:
+Processing and publishing are independent.
 
-- Draft
-- Processing
-- Ready
-- Published
-- Unpublished
-- Archived
-- Processing Failed
+## 10.1 processingStatus
+
+- `UPLOADED` — master stored, job not finished
+- `PROCESSING` — worker running
+- `READY` — derivatives stored successfully
+- `FAILED` — processing failed; master retained; retry allowed
+
+## 10.2 productStatus
+
+- `DRAFT` — not in storefront discovery (includes unpublished)
+- `PUBLISHED` — visible in storefront discovery
+- `ARCHIVED` — hidden from storefront; retained for history
+
+Rules:
+
+- New assets always start as `DRAFT` + `UPLOADED`.
+- Admin can publish only when `processingStatus = READY`.
+- Publishing sets `productStatus = PUBLISHED`.
+- Unpublishing returns `productStatus` to `DRAFT`.
+- Archive sets `productStatus = ARCHIVED`.
+- Storefront discovery shows only `PUBLISHED` + `READY`.
+- Existing purchases and downloads remain valid after unpublish or archive.
 
 ---
 
 # 11. Pricing
 
-The MVP should support a base price.
+MVP uses license-based pricing.
 
-Future pricing may support:
+- Seed license: `STANDARD`.
+- An asset may have one or more `AssetLicense` rows.
+- Price is stored as integer paise (`pricePaise`) with `currency = INR`.
+- UI components must not hard-code prices or license lists.
+- The customer-facing price is a display value.
+- The server calculates the authoritative checkout amount from the database at checkout time.
+- The catalog service supplies gallery-card prices (STANDARD `AssetLicense` when active; otherwise the first active license by `sortOrder`).
+- `OrderItem` stores an immutable snapshot of title, license, unit price, tax, currency, and totals.
 
-- Standard license
-- Commercial license
-- Extended license
-- Editorial license
-- Subscription
-- Credit-based purchase
+Future licenses (data, not new pricing engines): Extended, Editorial, Commercial, Enterprise.
 
----
-
-# 12. Search
-
-Search should initially support:
-
-- Title
-- Description
-- Tags
-- Category
-- Image code
-
-Future search may support:
-
-- AI semantic search
-- Similar images
-- Visual search
-- Color search
+Future pricing models (out of MVP): subscriptions, credits, bundles.
 
 ---
 
-# 13. Filtering
+# 12. Tax
 
-Customers should eventually filter by:
+India-first. Currency: INR.
 
-- Category
-- Subcategory
-- Orientation
-- Resolution
-- File format
-- Price
-- License
-- Newest
-- Popular
+MVP supports GST as a configurable tax rate stored in the database (`TaxRate`), snapshotted onto the order at checkout.
+
+Do not hard-code a GST percentage in application code.
+
+Do not build a complete tax engine (place of supply, HSN matrix, GSTIN invoicing) in MVP.
+
+The production GST rate and applicability for digital image sales must be confirmed with the business’s tax/accounting requirements before launch.
 
 ---
 
-# 14. Success Metrics
+# 13. Search
 
-Initial metrics:
+MVP search uses PostgreSQL.
 
-- Number of published assets
-- Number of registered customers
-- Number of product views
-- Add-to-cart rate
-- Checkout conversion
-- Purchase conversion
+Fields: title, description, tags, category, asset code.
+
+Repository/service layer must be replaceable later by a dedicated search engine. Do not add Elasticsearch, OpenSearch, or Algolia in MVP.
+
+---
+
+# 14. Filtering
+
+MVP filters:
+
+- Category (including selected child categories)
+- Orientation (landscape, portrait, square)
+- Sort: newest
+
+Future filters: resolution, file format, price range, license, popularity.
+
+---
+
+# 15. Site Content
+
+Do not build a CMS.
+
+Homepage content is static or application configuration in the storefront. Featured collections are out of MVP.
+
+---
+
+# 16. Success Metrics
+
+Initial operational metrics (dashboard / queries, not a separate analytics product):
+
+- Published assets
+- Registered customers
 - Revenue
 - Average order value
+- Orders
 - Downloads
-- Most popular assets
+
+Future: product views, add-to-cart rate, conversion funnels, most popular assets.
 
 ---
 
-# 15. Business Model
+# 17. Business Model
 
-Primary:
+Primary (MVP): individual licensed image sales.
 
-Individual image sales.
-
-Future:
-
-- Image bundles
-- Subscription
-- Credits
-- Contributor marketplace
-- Enterprise licensing
-- API licensing
+Future: bundles, subscription, credits, contributor marketplace, enterprise licensing, API licensing.

@@ -1,249 +1,162 @@
 # Bommastock — Design System
 
-## 1. Design Direction
+Version: Phase 0 (locked)
 
-Bommastock should feel:
+---
 
-- Premium
-- Modern
-- Elegant
-- Visual
-- Minimal
-- Trustworthy
+# 1. Design Direction
 
-The interface should allow images to remain the primary visual focus.
+Bommastock should feel premium, modern, elegant, visual, minimal, and trustworthy.
+
+Images remain the primary visual focus. UI chrome stays quiet.
 
 ---
 
 # 2. Brand Colors
 
-Primary brand colors will be defined separately after final brand exploration.
+Primary brand colors will be defined after brand exploration.
 
-Neutral foundation:
+Neutral foundation: black, white, gray scale.
 
-- Black
-- White
-- Gray scale
-
-Use neutral colors extensively so image content remains dominant.
+Use neutrals extensively so image content stays dominant.
 
 ---
 
 # 3. Typography
 
-Use a modern sans-serif typeface.
+Modern sans-serif. Initial font: Inter.
 
-Preferred initial font:
-
-Inter
-
-Typography should support:
-
-- Strong visual hierarchy
-- High readability
-- Clear pricing
-- Clear metadata
-- Accessible text sizing
+Support strong hierarchy, readable metadata, clear INR prices, and accessible text sizing.
 
 ---
 
 # 4. Spacing
 
-Use a consistent spacing scale.
+Base: 4px.
 
-Recommended base:
-
-4px
-
-Examples:
-
-4
-8
-12
-16
-24
-32
-40
-48
-64
-80
-96
+Scale: 4, 8, 12, 16, 24, 32, 40, 48, 64, 80, 96.
 
 ---
 
 # 5. Border Radius
 
-Use moderate rounded corners.
+Moderate rounding. Avoid excessive rounding.
 
-Cards:
-
-12–16px
-
-Buttons:
-
-8–12px
-
-Inputs:
-
-8–12px
-
-Avoid excessive rounding.
+- Cards: 12–16px
+- Buttons: 8–12px
+- Inputs: 8–12px
 
 ---
 
 # 6. Image Cards
 
-Image cards should prioritize:
+Priority:
 
-1. Image
+1. Public thumbnail
 2. Title
 3. Metadata
-4. Price
+4. Display price (paise passed in from the catalog service)
 5. Actions
 
-Hover states may include:
+Hover may include quick preview of the **watermarked** image and Add to cart.
 
-- Quick preview
-- Favorite
-- Add to cart
+Do not include a favorite/wishlist control in MVP.
+
+Cards must never use master or working-preview URLs.
+
+`PriceDisplay` receives paise from the server and formats INR. It must not contain catalog prices.
 
 ---
 
 # 7. Product Detail
 
-Product detail page should provide:
-
-- Large preview
-- Watermark
-- Title
-- Description
-- Resolution
-- Format
-- Category
-- Tags
-- License
-- Price
+- Large watermarked preview
+- Title, description
+- Resolution, format, category, tags
+- `LicenseSelector` populated from active `AssetLicense` rows
+- Display price for the selected license
 - Add to cart
-- Buy now
+- Buy Now
+
+Watermarks are baked into the preview file. Components do not overlay a CSS-only watermark as the security control.
 
 ---
 
 # 8. Buttons
 
-Primary actions:
+Primary: Add to Cart, Buy Now, Upload, Publish, Save, Pay
 
-- Add to Cart
-- Buy Now
-- Upload
-- Publish
-- Save
+Secondary: Cancel, Edit, Preview, Retry processing, Unpublish
 
-Secondary:
+Destructive: Disable customer, Archive
 
-- Cancel
-- Edit
-- Preview
-
-Destructive:
-
-- Delete
-- Unpublish
-- Archive
+Unpublish is secondary (returns the asset to `DRAFT`), not a separate status badge named Unpublished.
 
 ---
 
 # 9. Forms
 
-All forms must have:
+Every form control: label, input, helper text where needed, validation, error state, success state.
 
-- Label
-- Input
-- Helper text where needed
-- Validation
-- Error state
-- Success state
+Accessible labels are required.
 
 ---
 
 # 10. Loading
 
-Use skeleton loaders for:
+Skeleton loaders: image grids, product details, tables.
 
-- Image grids
-- Product details
-- Tables
-
-Use progress indicators for:
-
-- File uploads
-- Image processing
+Progress: file upload and `processingStatus` (UPLOADED / PROCESSING / READY / FAILED).
 
 ---
 
 # 11. Empty States
 
-Every major data view must have a meaningful empty state.
+Every major view needs a meaningful empty state and an action where possible.
 
-Example:
-
-No images found.
-
-Provide an appropriate action where possible.
+Examples: No images found. Cart is empty. No purchases yet. No failed jobs.
 
 ---
 
 # 12. Accessibility
 
-Follow WCAG 2.2 principles.
+WCAG 2.2: keyboard, focus indicators, contrast, semantic structure, labels, screen readers, reduced motion where appropriate.
 
-Requirements:
-
-- Keyboard accessible
-- Focus indicators
-- Contrast
-- Semantic structure
-- Accessible labels
-- Screen reader support
+Decorative gallery images still need meaningful `alt` from the asset title.
 
 ---
 
 # 13. Responsive Grid
 
-Desktop storefront:
+CSS grid by available width, not fixed breakpoints alone.
 
-Use responsive CSS grid.
-
-Example:
-
-Large desktop:
-4–6 image cards per row.
-
-Tablet:
-3–4.
-
-Mobile:
-2.
-
-The exact layout should adapt based on available width rather than fixed screen assumptions.
+- Large desktop: 4–6 cards
+- Tablet: 3–4
+- Mobile: 2
 
 ---
 
 # 14. Component Strategy
 
-Create reusable components.
+Reusable presentational components in `packages/ui`. Domain data is passed in as props.
 
 Examples:
 
-ImageCard
-ImageGrid
-SearchBar
-FilterPanel
-PriceDisplay
-LicenseSelector
-CartItem
-ProductMetadata
-UploadDropzone
-ImageProcessingStatus
-DataTable
-Modal
-Toast
+- ImageCard
+- ImageGrid
+- SearchBar
+- FilterPanel
+- PriceDisplay
+- LicenseSelector
+- CartItem
+- ProductMetadata
+- UploadDropzone
+- ImageProcessingStatus
+- ProductStatusBadge (`DRAFT` | `PUBLISHED` | `ARCHIVED`)
+- DataTable
+- Modal
+- Toast
+
+`LicenseSelector` and `PriceDisplay` must not hard-code license codes, amounts, or GST percentages. The catalog service chooses which `AssetLicense` price to pass to gallery cards (the STANDARD row when it is active; otherwise the first active license by `sortOrder`).
+
+Admin tables show `processingStatus` and `productStatus` as two badges, never as one combined list.

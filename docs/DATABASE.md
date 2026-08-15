@@ -1,6 +1,6 @@
 # Bommastock — Database Specification
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 Status: Implementation-ready (documentation only; Prisma schema is not created in this phase)
 Database: PostgreSQL
 ORM: Prisma
@@ -179,7 +179,7 @@ TAX_RATE (exactly one ACTIVE)
 | email | String | no | — | Unique, lowercase |
 | emailVerified | DateTime | yes | — | Unused for MVP gate |
 | image | String | yes | — | Avatar, not a master |
-| passwordHash | String | yes | — | Credentials; never log |
+| passwordHash | String | yes | — | Argon2id; never log |
 | role | UserRole | no | CUSTOMER | |
 | status | UserStatus | no | ACTIVE | DISABLED cannot authenticate |
 | createdAt | DateTime | no | now() | |
@@ -228,6 +228,8 @@ Tree. `parentId = null` is a root. Child rows are subcategories. No Subcategory 
 
 MVP browse: selecting a parent includes **all descendant** categories’ published assets.
 
+Storefront discovery **excludes** assets whose category or any ancestor is `INACTIVE`. `productStatus` is unchanged. Paid downloads remain valid.
+
 Do not delete a category with children or assets; set `INACTIVE` or reassign.
 
 ---
@@ -259,7 +261,7 @@ Unique `slug`, unique case-normalized `name`. Restrict delete if `AssetTag` exis
 
 Constraints: unique `code`, unique `slug`. `code` must never be updated after insert.
 
-`slug`: generated from title (lowercase, hyphenated, unique suffix if needed). Admin may change; uniqueness enforced.
+`slug`: lowercase NFKD, `[a-z0-9]+` joined by hyphens, max 80 chars; fallback `untitled-asset`; suffix `-2`, `-3` on collision. Admin may change; uniqueness enforced. `code` is immutable and never derived from slug.
 
 `code` uses `DailySequence` kind `ASSET_CODE` (same visual format as order numbers, separate sequence).
 
@@ -311,7 +313,7 @@ Seed `STANDARD`. Unique `code`. Deactivate instead of delete.
 | id | String | no | cuid() | PK |
 | assetId | String | no | — | FK Cascade |
 | licenseId | String | no | — | FK Restrict |
-| pricePaise | Int | no | — | GST-inclusive, ≥ 0 |
+| pricePaise | Int | no | — | GST-inclusive, ≥ 0 (0 allowed) |
 | currency | String | no | INR | |
 | isActive | Boolean | no | true | |
 | isDefault | Boolean | no | false | |
@@ -420,6 +422,7 @@ Checkout: reload `AssetLicense.pricePaise`. If it differs from the quote, return
 |---|---|---|---|---|
 | id | String | no | cuid() | PK |
 | orderNumber | String | no | — | Unique `BS-YYYYMMDD-XXXXXX` via DailySequence ORDER_NUMBER |
+| idempotencyKey | String | no | — | UUID from client; unique with userId |
 | userId | String | no | — | FK User Restrict; checkout requires authenticated user |
 | status | OrderStatus | no | PENDING | |
 | subtotalBeforeTaxPaise | Int | no | — | Snapshot |
@@ -430,9 +433,20 @@ Checkout: reload `AssetLicense.pricePaise`. If it differs from the quote, return
 | paidAt | DateTime | yes | — | Set when PAID |
 | createdAt / updatedAt | DateTime | no | | |
 
+Constraints:
+
+- PK: `id`
+- Unique: `orderNumber`
+- Unique: `(userId, idempotencyKey)`
+- FK: `userId` → User.id onDelete Restrict
+
+Indexes: `userId`, `status`, `createdAt`.
+
 Never delete. After `PAID`, do not change money fields except a later `REFUNDED` status.
 
-Unpaid expiry: MVP may mark `PENDING` orders `CANCELLED` (and payment `CANCELLED`) after 30 minutes without capture.
+Unpaid expiry: mark `PENDING` orders `CANCELLED` (and payment `CANCELLED`) after 30 minutes without capture (Inngest cron + lazy read).
+
+If `totalPaise === 0`, checkout marks Payment `CAPTURED` and Order `PAID` without Razorpay.
 
 ---
 

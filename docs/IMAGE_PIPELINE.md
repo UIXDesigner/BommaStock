@@ -1,6 +1,6 @@
 # Bommastock — Image Processing Pipeline
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
 ---
 
@@ -59,16 +59,17 @@ MVP has no in-place replace-master. Future replace-master must add a new version
 
 # 5. Validation
 
-Reject or fail the job if any check fails:
+Two stages (D007):
 
-- MIME allowlist: `image/jpeg`, `image/png`, `image/tiff`, `image/webp`
-- Extension: `jpg`, `jpeg`, `png`, `tif`, `tiff`, `webp`
-- Magic bytes / file signature where practical
-- Sharp decode
-- Max size 512 MiB
-- Max longest edge 20,000 px
-- Max 250 megapixels
-- Filename sanitization: original name is discarded; it is never a storage path
+1. **Before presigned PUT:** MIME allowlist, extension, declared size ≤ 512 MiB. No PUT URL if rejected.
+2. **In Inngest job:** magic bytes, Sharp decode, actual dimensions, megapixels, CMYK convertibility.
+
+Allowlist MIME: `image/jpeg`, `image/png`, `image/tiff`, `image/webp`.  
+Extensions: `jpg`, `jpeg`, `png`, `tif`, `tiff`, `webp`.  
+Max longest edge: 20,000 px. Max megapixels: 250.  
+Filename sanitization: original name is discarded; it is never a storage path.
+
+Single PUT if size ≤ 100 MiB; multipart if 100 MiB < size ≤ 512 MiB.
 
 CMYK: accept only if Sharp can decode and convert derivatives to sRGB. If not, fail the job with a clear processing error. Leave the master unchanged.
 
@@ -84,9 +85,11 @@ Width, height, orientation (`LANDSCAPE` / `PORTRAIT` / `SQUARE`), format, MIME, 
 
 # 7. Derivatives
 
-- Thumbnail: longest edge 480 px, WebP, public
-- Working preview: 1600 px, WebP, private, unwatermarked
-- Watermarked preview: from working preview, 1600 px, WebP, public, repeated diagonal Bommastock watermark configured in `packages/image-processing`
+- Thumbnail: longest edge 480 px, WebP **quality 75**
+- Working preview: 1600 px, WebP **quality 82**, private, unwatermarked
+- Watermarked preview: from working preview, 1600 px, WebP **quality 82**, public
+
+Watermark defaults (D034): repeated diagonal text `BOMMASTOCK`, −35°, opacity 0.16, font 5% of min(width,height) clamped 18–72 px, tile gap 1.6× font, white fill + 1 px dark stroke. Constants in `packages/image-processing`. No admin UI in MVP.
 
 CMYK masters: convert **derivatives** to sRGB; do not recompress the master.
 

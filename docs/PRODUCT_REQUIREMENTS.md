@@ -1,6 +1,6 @@
 # Bommastock — Product Requirements Document
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
 ---
 
@@ -89,7 +89,8 @@ Login
 - Add to cart
 - Buy Now
 - Customer registration and login (email and password)
-- Account / profile
+- Change password and forgot password
+- Account / profile (`name`; email change not MVP)
 - Razorpay checkout
 - Purchase history
 - Secure master download

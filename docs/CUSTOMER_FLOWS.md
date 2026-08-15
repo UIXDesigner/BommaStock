@@ -1,6 +1,6 @@
 # Bommastock — Customer Flows
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
 Storefront app: `apps/storefront`.
 
@@ -14,7 +14,7 @@ Display:
 
 - Hero and search
 - Root categories
-- Newly published images (`PUBLISHED` + `READY`)
+- Newly published images (`PUBLISHED` + `READY`, category ACTIVE)
 
 Homepage copy is static or application configuration. No CMS.
 
@@ -34,7 +34,7 @@ On login, merge the guest cart into the customer cart.
 
 # 3. Search
 
-PostgreSQL over title, description, tags, category name, asset code. Results: `PUBLISHED` + `READY` only.
+PostgreSQL over title, description, tags, category name, asset code. Results: `PUBLISHED` + `READY` and category (and ancestors) `ACTIVE`.
 
 ---
 
@@ -191,7 +191,15 @@ The page never embeds a permanent master link and never receives `storageKey`.
 
 # 17. Customer Account
 
-Profile, orders, purchases/downloads. Out of MVP: wishlist, collections.
+MVP sections:
+
+- Profile (`name` only; email change is not MVP)
+- Change password
+- Forgot password (email link)
+- Orders
+- Purchases / downloads
+
+Out of MVP: wishlist, collections.
 
 ---
 

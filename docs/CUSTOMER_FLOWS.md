@@ -1,170 +1,121 @@
 # Bommastock — Customer Flows
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 Storefront app: `apps/storefront`.
 
-Public storefront images are thumbnail and watermarked preview only. Never expose master or working-preview URLs.
+The browser may receive `publicUrl` for thumbnails and watermarked previews. It must never receive MASTER or WORKING_PREVIEW `storageKey` values. Purchased masters are returned only as `signedUrl` (300 seconds).
 
 ---
 
 # 1. Homepage
 
-Customer opens the storefront.
-
 Display:
 
 - Hero and search
 - Root categories
-- Newly published images (`productStatus = PUBLISHED` and `processingStatus = READY`)
+- Newly published images (`PUBLISHED` + `READY`)
 
-Primary action: search images.
-
-Homepage copy and highlights are static or application configuration. There is no CMS and no collections product in MVP.
+Homepage copy is static or application configuration. No CMS.
 
 ---
 
 # 2. Authentication
 
-Customer registers and logs in on the storefront with email and password (Auth.js Credentials).
+Email and password (Auth.js Credentials). OAuth is not in MVP. Email verification is not required for checkout.
 
-Browsing, search, category, and image detail are public.
+Browsing, search, category, detail, and **guest cart** are available without login.
 
-Add to cart, Buy Now, checkout, purchases, and download require a CUSTOMER session. Unauthenticated cart/checkout actions redirect to login.
+Checkout, purchases, and download require a CUSTOMER session.
 
-OAuth social login is not in MVP. Email verification is not required for MVP checkout.
+On login, merge the guest cart into the customer cart.
 
 ---
 
 # 3. Search
 
-Customer enters a search term.
-
-Example: Krishna
-
-PostgreSQL search over:
-
-- Title
-- Description
-- Tags
-- Category name
-- Asset code
-
-Results include only `PUBLISHED` + `READY` assets.
+PostgreSQL over title, description, tags, category name, asset code. Results: `PUBLISHED` + `READY` only.
 
 ---
 
 # 4. Category
 
-Customer selects a root category (example: Gods & Deities).
+Tree via `parentId`. No Subcategory table.
 
-Display:
+Selecting a parent category includes assets in **all descendant** categories. Selecting a child includes that node (and its descendants if any).
 
-- Category header
-- Child categories (subcategories)
-- Image grid
-- Filters
-- Sort (newest)
-
-Selecting a child category (example: Lord Ganesha) filters to that node. Category is a tree (`parentId`). There is no separate Subcategory entity.
+Display: header, child categories, grid, filters, sort newest.
 
 ---
 
 # 5. Filters
 
-MVP:
-
-- Category / subcategory
-- Orientation: landscape, portrait, square
-- Sort: newest
-
-Future: resolution, format, price, license, popularity.
+MVP: category (with descendants), orientation, sort newest.
 
 ---
 
 # 6. Image Gallery
 
-Each card displays:
+Each card:
 
-- Public thumbnail
+- Thumbnail `publicUrl`
 - Title
-- Display price supplied by the catalog service (STANDARD `AssetLicense` when active; otherwise the first active license by `sortOrder`)
-- Relevant metadata (orientation or dimensions as space allows)
-- Add to cart (requires authentication; otherwise redirect to login)
+- GST-inclusive display price from the **default** `AssetLicense`
+- Add to cart (guest allowed)
 
-Do not show a favorite/wishlist control in MVP.
+Add to cart without a license picker uses the default license.
 
-Cards must not load master or working-preview URLs.
+No wishlist control.
 
 ---
 
 # 7. Image Details
 
-Display:
-
-- Large watermarked preview (`public/previews/{assetId}/preview.webp`)
-- Title
-- Description
-- Resolution / dimensions (from master metadata)
-- Format
-- Category
-- Tags
-- License selector (from active `AssetLicense` rows, not hard-coded)
-- Display price for the selected license
+- Watermarked preview `publicUrl` (not a storageKey field)
+- Title, description, dimensions, format, category, tags
+- License selector (active `AssetLicense` rows)
+- GST-inclusive price for the selected license
 - Add to cart
-- Buy Now
+- Buy Now (redirect to login if guest, preserving the intended line)
 
-Never expose the master file URL or storage key.
+Never expose master `storageKey` or a permanent master URL.
 
 ---
 
 # 8. License Selection
 
-The selector lists active licenses attached to the asset.
+Lists active licenses. MVP seeds STANDARD. Additional licenses appear from data.
 
-MVP seeds STANDARD. If additional licenses exist in the database, they appear automatically.
-
-The displayed price updates from `AssetLicense.pricePaise`. That value is display-only.
+Displayed price is GST-inclusive and display-only.
 
 ---
 
 # 9. Add to Cart
 
-Requires an authenticated CUSTOMER.
+Guest or authenticated.
 
-Customer selects Asset + License, then adds to cart.
+If the customer did not select a license, use the asset’s default active `AssetLicense` (exactly one default per published asset).
 
 Server:
 
 - Validates `PUBLISHED` + `READY`
 - Validates active `AssetLicense`
-- Upserts `CartItem` for `(userId, assetId, licenseId)`
-- Stores `quotedPricePaise` as a display snapshot
-
-The same asset/license cannot appear twice for one user.
+- Upserts `CartItem` for `(cartId, assetId, assetLicenseId)`
+- Stores `quotedUnitPriceIncludingTaxPaise` from the live inclusive price (quote only)
 
 ---
 
 # 10. Cart
 
-Display:
+Display thumbnail `publicUrl`, title, license, GST-inclusive quoted price, remove, estimated tax breakdown, GST-inclusive total.
 
-- Thumbnail
-- Asset title
-- License name
-- Display price (revalidated from the database when the cart is loaded)
-- Remove
-- Subtotal, tax, total as estimates
-
-Revalidate live `AssetLicense` prices before checkout. If a price changed, tell the customer and use the server price. Never charge a browser-submitted amount.
+Quotes are not authoritative.
 
 ---
 
 # 11. Buy Now
 
-Requires an authenticated CUSTOMER.
-
-Buy Now uses the same `CheckoutService` as cart checkout with a single in-memory `(assetId, licenseId)` item. It does not depend on persisting that line in the cart.
+Same `CheckoutService` as cart, one line. Login required before payment. Guest is prompted to log in; the line is in the cart/guest cart.
 
 ---
 
@@ -172,24 +123,18 @@ Buy Now uses the same `CheckoutService` as cart checkout with a single in-memory
 
 Requires authentication.
 
-Display:
-
-- Customer identity (from session)
-- Order summary (title, license, server unit price)
-- Tax (from configurable `TaxRate`, snapshotted)
-- Final amount in INR
-- Pay with Razorpay
-
-Flow:
-
-1. Load asset/license from the database.
+1. Load lines and live `AssetLicense` prices.
 2. Validate availability.
-3. Calculate amounts on the server.
-4. Create `Order` `PENDING_PAYMENT` with immutable `OrderItem` snapshots.
-5. Create Razorpay order for `totalPaise`.
-6. Customer pays.
-7. Server verifies signature and amount.
-8. Webhook reconciles; `Payment` `CAPTURED`; `Order` `PAID`.
+3. If any live inclusive price ≠ cart quote → **`PRICE_CHANGED`**. Show the new GST-inclusive price. Do not charge. Customer confirms; quotes update; checkout is resubmitted.
+4. Never trust a browser price.
+5. Compute tax with the single ACTIVE `TaxRate` (round half up, integer paise).
+6. Create `Order` `PENDING` with immutable `OrderItem` snapshots (before-tax, rate, tax, inclusive, line total).
+7. Create `Payment` `PENDING` and Razorpay order for `totalPaise` INR.
+8. Customer pays.
+9. Server verifies signature.
+10. Webhook reconciles authoritatively; `Payment` `CAPTURED`; `Order` `PAID`.
+
+Catalog prices shown here are GST-inclusive.
 
 ---
 
@@ -198,87 +143,64 @@ Flow:
 ```text
 Checkout
 → Razorpay Checkout
-→ Client returns payment ids (untrusted)
-→ Server verifies signature, amount, currency, order id
-→ Webhook reconciliation (idempotent)
-→ Order confirmation
+→ Client payment ids (untrusted)
+→ Server HMAC + amount/currency/order verification
+→ Webhook authoritative reconciliation (idempotent)
+→ Order PAID / Payment CAPTURED
 ```
 
-On failure: show a safe error. Leave the order `FAILED` or `PENDING_PAYMENT` as appropriate. Do not entitle downloads.
+Failure: `Payment` `FAILED`, `Order` `FAILED`. No downloads. New checkout required.
+
+Cancel or unpaid expiry (30 minutes): `CANCELLED` on payment and order.
+
+Refunds: `REFUNDED`; downloads revoked.
 
 ---
 
 # 14. Purchase Confirmation
 
-Display:
-
-- Order number
-- Purchased assets (snapshot titles)
-- License names (snapshot)
-- Amount paid
-- Download action per entitled line
+Order number (`BS-YYYYMMDD-XXXXXX`), snapshot titles/licenses, GST-inclusive amount paid, download when `PAID`/`CAPTURED`.
 
 ---
 
 # 15. My Purchases
 
-Customer can see:
+Snapshot titles, date, license, download availability.
 
-- Purchased assets (snapshots)
-- Purchase date
-- License
-- Download availability
-
-Unpublished or archived assets still appear here and remain downloadable.
+Unpublished or archived assets remain listed and downloadable for that order. Live catalog license deactivation does not remove entitlement.
 
 ---
 
 # 16. Download
 
-Customer clicks download.
-
 ```text
 Authenticate
-→ Identify asset from OrderItem
-→ Verify the order belongs to this customer
-→ Verify Order PAID and Payment CAPTURED
-→ Verify license on the line
-→ Verify master AssetFile exists
-→ Signed R2 URL, TTL 300 seconds
-→ Insert Download row
-→ Return temporary URL
+→ OrderItem id (not a client storageKey or untrusted asset id)
+→ Order belongs to this customer
+→ Order PAID and Payment CAPTURED
+→ Entitlement = OrderItem license snapshot
+→ Resolve master server-side
+→ signedUrl TTL 300 seconds
+→ Insert Download
+→ Return { url, expiresInSeconds: 300 }
 ```
 
-The browser then fetches the master through that URL. The page never embeds a permanent master link.
+The page never embeds a permanent master link and never receives `storageKey`.
 
 ---
 
 # 17. Customer Account
 
-MVP sections:
-
-- Profile
-- Orders
-- Purchases / downloads
-
-Out of MVP: wishlist, saved collections.
+Profile, orders, purchases/downloads. Out of MVP: wishlist, collections.
 
 ---
 
 # 18. Error States
 
-Show clear, non-technical errors for:
-
-- Image unavailable (not published, not ready, or archived)
-- Price changed at checkout
-- Payment failure
-- Login failure
-- Download failure
-- Network failure
-- Cart failure (unauthenticated, duplicate handled by upsert, inactive license)
+Clear errors for: unavailable image, **price changed**, payment failure, login failure, download failure, network failure, inactive license, cart merge issues.
 
 ---
 
-# 19. Future Customer Features
+# 19. Future
 
-Wishlist, collections, reviews, coupons, subscriptions, credits, visual search.
+Wishlist, collections, reviews, coupons, subscriptions, credits, visual search, OAuth.

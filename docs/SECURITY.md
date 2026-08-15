@@ -1,84 +1,52 @@
 # Bommastock — Security Specification
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 ---
 
 # 1. Security Objective
 
-Protect:
+Protect masters, working previews, accounts, payments, orders, downloads, and personal information.
 
-- Master images and working previews
-- Customer accounts
-- Admin accounts
-- Payments
-- Orders
-- Download access
-- Personal information
-
-Assume every client-side request can be manipulated. Prices, payment status, and download entitlement are server decisions.
+Assume every client request can be manipulated. Prices, payment status, and download entitlement are server decisions.
 
 ---
 
 # 2. Authentication
 
-Provider: Auth.js with Prisma adapter. One `User` table. Roles: `CUSTOMER`, `ADMIN`.
+Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`, `ADMIN`. No Supabase Auth.
 
-- Customer registration and login are public on the storefront (email and password, Auth.js Credentials).
-- OAuth social login is not in MVP.
-- Email verification is not required for MVP checkout.
-- There is no public admin registration.
-- First admin is created by a secure bootstrap/seed process (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`). The process refuses to create another admin if one exists, unless an explicit controlled force flag is used.
-- Additional admins are provisioned, not self-served.
-- Disabled users (`User.status = DISABLED`) cannot authenticate.
-- Protected customer routes: cart mutations, checkout, purchases, downloads.
-- Admin app and all admin server actions require `role === ADMIN`.
-
-Do not use Supabase Auth. Do not create a second user database.
-
-Frontend route hiding is not authorization.
+- Customer: email/password. OAuth later. Email verification not required for MVP checkout.
+- Guest cart allowed; checkout requires login.
+- No public admin registration.
+- First admin: env/CLI bootstrap (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`). Refuse if an admin exists. Credentials never in source.
+- Additional admins: controlled provisioning only.
+- `DISABLED` users cannot authenticate.
+- `requireUser` / `requireAdmin` on the server. Frontend hiding is not authorization.
 
 ---
 
 # 3. Authorization
 
-Authentication answers who the user is.
-
-Authorization answers what they may do.
-
-`requireUser()` and `requireAdmin()` run on the server for every sensitive action.
+Who vs what. Every sensitive mutation is authorized server-side.
 
 ---
 
 # 4. Untrusted Client Payloads
 
-Never trust:
-
-- Client-side price
-- Client-side order amount
-- Client-side payment success
-- Client-side order status
-- Client-supplied storage keys
-- Client-supplied MIME type as the only file check
-- Client-supplied user id or role
-
-The server loads assets, licenses, and prices from PostgreSQL.
+Never trust: client price, order amount, payment success, order status, private `storageKey`, client MIME as the only file check, client user id/role, client asset id as download authority.
 
 ---
 
-# 5. Master Image Protection
+# 5. Storage: storageKey vs publicUrl vs signedUrl
 
-Masters and working previews stay in the private R2 bucket.
+| Term | Browser |
+|---|---|
+| `storageKey` (MASTER / WORKING_PREVIEW) | Never |
+| `publicUrl` (thumbnail, watermarked preview) | Yes |
+| `signedUrl` (300s) | After entitlement (customer master) or `requireAdmin` (working preview) |
 
-Do not expose:
-
-- Bucket credentials
-- Master storage keys
-- Working-preview keys to the storefront
-- Permanent download URLs
-- Unwatermarked large previews on the public CDN
-
-Public CDN objects: thumbnail and watermarked preview only.
+Never return R2 credentials or permanent private URLs.
 
 ---
 
@@ -86,153 +54,118 @@ Public CDN objects: thumbnail and watermarked preview only.
 
 TTL: 300 seconds.
 
-Flow:
-
 1. Authenticate customer.
-2. Identify asset from `OrderItem` (not from a client storage key).
+2. Identify `OrderItem` (not a client `storageKey` or untrusted asset id).
 3. Verify the order belongs to the session user.
 4. Verify `Order.status = PAID` and `Payment.status = CAPTURED`.
-5. Verify license entitlement on the line.
-6. Verify MASTER `AssetFile` exists.
-7. Generate a short-lived signed GET URL.
+5. Verify entitlement from the **OrderItem license snapshot** (live `AssetLicense` may be inactive).
+6. Resolve MASTER `storageKey` server-side.
+7. Generate `signedUrl`.
 8. Insert `Download`.
-9. Return `{ url, expiresInSeconds: 300 }`.
+9. Return `{ url, expiresInSeconds: 300 }` only.
 
-Never return R2 credentials, permanent master URLs, or storage keys.
+A customer cannot download another customer’s asset by changing an asset id.
 
-Unpublished or archived assets remain downloadable for entitled purchases.
-
-Download rows exist so quotas can be added later. MVP does not enforce a numeric cap.
+Admin working preview: `signedUrl` 300s, `requireAdmin`.
 
 ---
 
 # 7. Payment Security
 
-Razorpay Orders + signature verification + webhooks.
+Razorpay Orders. Currency INR. Catalog prices GST-inclusive.
 
-Server must:
+Server:
 
-- Calculate amount from `AssetLicense` and `TaxRate`
-- Create internal `Order` `PENDING_PAYMENT` with snapshots
-- Create Razorpay order for `totalPaise` INR
-- Verify HMAC signature
-- Validate amount, currency, and order id
-- Reconcile webhooks
-- Mark `Payment` `CAPTURED` and `Order` `PAID` only after verification
+1. Revalidate cart (availability, license, live price).
+2. On quote mismatch return `PRICE_CHANGED`; do not charge.
+3. Calculate totals (integer paise, round half up).
+4. Create `Order` `PENDING` and `Payment` `PENDING`.
+5. Create Razorpay order.
+6. Verify HMAC on callback; fetch/validate amount, currency, order id.
+7. Webhook is authoritative reconciliation.
+8. Map provider status → `PENDING` | `AUTHORIZED` | `CAPTURED` | `FAILED` | `CANCELLED` | `REFUNDED`.
+9. Entitlement only when `CAPTURED` / Order `PAID`.
+10. Idempotent on `providerPaymentId`.
 
-`providerPaymentId` is unique. Duplicate webhooks are no-ops.
+Never trust client-reported success.
 
-`RAZORPAY_KEY_ID` may be public. `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are server-only.
+Failed attempt → `FAILED`. Unpaid cancel/expiry → `CANCELLED`. Refund → `REFUNDED` and entitlement revoked.
+
+`RAZORPAY_KEY_ID` may be public. Secrets are server-only.
 
 ---
 
 # 8. Admin Security
 
-These actions require server-side ADMIN authorization:
+Server-side ADMIN for: upload, retry, publish/unpublish/archive, prices/licenses, categories/tags, disable customers, refunds, role changes.
 
-- Upload
-- Replace master
-- Retry processing
-- Publish / unpublish / archive
-- Edit price or licenses
-- Manage categories and tags
-- Disable customers
-- View orders, customers, downloads, audit log
-
-Admin working-preview access uses short-lived signed URLs, never public objects.
+Working preview: short-lived `signedUrl` only.
 
 ---
 
 # 9. Upload Security
 
-Validate:
-
-- Extension allowlist
-- MIME allowlist
-- File signature / magic bytes
-- File size (512 MiB)
-- Longest edge (20,000 px)
-- Megapixels (250)
-- Decodability via Sharp
-
-Do not execute uploaded files. Original filenames never become storage paths.
+MIME, extension, magic bytes, 512 MiB, 20,000 px, 250 MP, Sharp decode, filename sanitization (never use original name as path). JPEG, PNG, WebP, TIFF. CMYK only if Sharp can process; otherwise fail clearly.
 
 ---
 
 # 10. Input Validation
 
-Validate API inputs, form inputs, query parameters, ids, pagination, and filters with Zod (`packages/types`).
-
-Ignore client-submitted prices for charging.
+Zod on all inputs. Ignore client prices for charging.
 
 ---
 
 # 11. Secrets
 
-Never store secrets in frontend code, Git, the database, or `NEXT_PUBLIC_*` variables (except Razorpay key id and the public CDN base URL for thumbnails/previews).
-
-Use environment variables. See `/docs/ARCHITECTURE.md` §18.
+Never in frontend, Git, database, or `NEXT_PUBLIC_*` except Razorpay key id and public CDN base URL.
 
 ---
 
 # 12. Rate Limiting
 
-Required (not optional) on:
+Application-level (route handlers / middleware). MVP does not require Redis. Per-instance limits are acceptable; a shared store can be added later.
 
-- Login / register
-- Upload
-- Payment order creation and verification
-- Download URL minting
+| Action | Limit | Key |
+|---|---|---|
+| Login / register | 5 / 15 minutes | IP + email |
+| Upload initiation | 30 / hour | Admin user id |
+| Payment order creation | 10 / 15 minutes | User id |
+| Download `signedUrl` minting | 20 / 15 minutes | User id |
 
-Also apply reasonable limits to search and admin APIs.
+Also apply coarse limits to search and admin APIs.
 
 ---
 
-# 13. Logging and PII
+# 13. Audit Logging
 
-Log:
+Audit **mutations**, not ordinary reads.
 
-- Login and failed login (user id / email hashed or truncated as appropriate)
-- Admin actions (AuditLog)
-- Upload, publish, unpublish, archive
-- Payment verification outcomes (ids, not secrets)
-- Download issuance (Download row)
+Must audit: asset create/update, upload, processing retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin role changes, customer account disable, login failures.
 
-Never log:
+Never log: passwords, hashes, `AUTH_SECRET`, R2 keys, Razorpay secrets, tokens, full `signedUrl`, private `storageKey`, card data.
 
-- Passwords or password hashes
-- `AUTH_SECRET`
-- R2 access keys
-- Razorpay secrets
-- Full signed URLs
-- Webhook raw secrets
-- Card data (Razorpay never sends PAN to us; do not store it)
-
-PII:
-
-- Prefer user ids in logs.
-- Do not put emails in `AuditLog.metadata` unless necessary.
-- MVP Download rows do not store IP or user-agent.
-- Do not log EXIF GPS from masters.
+IP and user-agent **may** be stored on `AuditLog` according to the privacy policy.
 
 ---
 
 # 14. Derivatives Privacy
 
-Strip EXIF and GPS from public derivatives and from the working preview.
-
-Watermark generation lives in `packages/image-processing`.
+Strip EXIF/GPS from public derivatives and working preview. Watermark in `packages/image-processing`.
 
 ---
 
-# 15. Data Protection
+# 15. Inngest Endpoint
 
-Collect only data required to operate accounts, orders, and downloads.
-
-Provide privacy and data-management policies before production launch.
+`POST /api/inngest` on the admin app must verify Inngest signatures. Unsigned requests are rejected. It is not a public processing API.
 
 ---
 
-# 16. Security Principle
+# 16. Data Protection
 
-All critical decisions happen server-side: price, tax, payment capture, publish eligibility, and download entitlement.
+Collect only what accounts, orders, and downloads require. Privacy policy before production launch.
+
+---
+
+# 17. Security Principle
+
+Server-side: price, tax, `PRICE_CHANGED`, payment capture, publish eligibility, download entitlement.

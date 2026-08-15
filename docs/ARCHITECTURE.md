@@ -1,6 +1,6 @@
 # Bommastock — System Architecture
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 This document is the implementation architecture. It must stay consistent with `AGENTS.md` and `/docs/DATABASE.md`.
 
@@ -15,21 +15,15 @@ Two Next.js applications share PostgreSQL, Auth.js, Cloudflare R2, and domain pa
 ```text
 Customer  →  apps/storefront  →  packages (auth, database, payments, storage, types, ui)
 Admin     →  apps/admin       →  packages (auth, database, image-processing, storage, types, ui)
+                              →  POST /api/inngest (Inngest-verified)
 
-packages/database  →  PostgreSQL
+packages/database  →  PostgreSQL (Neon)
 packages/storage   →  Cloudflare R2
 packages/payments  →  Razorpay
-packages/image-processing + Inngest worker  →  Sharp  →  R2 + PostgreSQL
+packages/image-processing + Inngest  →  Sharp  →  R2 + PostgreSQL
 ```
 
-High-level flows:
-
-```text
-Browse/Search     →  PostgreSQL catalog (PUBLISHED + READY only)
-Upload            →  private R2 master  →  async job  →  derivatives
-Checkout          →  server price calc  →  pending Order  →  Razorpay  →  verify  →  PAID
-Download          →  auth + entitlement  →  signed master URL (300s)
-```
+Domain services (`CheckoutService`, catalog, download, publish, processing enqueue) live in the owning package (`payments`, `database` repositories, `storage`, `image-processing`) and are called from server actions/route handlers. They do not live in React components.
 
 ---
 
@@ -37,72 +31,37 @@ Download          →  auth + entitlement  →  signed master URL (300s)
 
 ```text
 bommastock_v1/
-  apps/storefront/              Customer Next.js app
-  apps/admin/                   Admin Next.js app
-  packages/ui/                  shadcn primitives, tokens, presentational components
-  packages/types/               Shared TypeScript types and Zod schemas
-  packages/database/            Prisma schema, client, repositories
-  packages/auth/                Auth.js config, session helpers, RBAC
-  packages/storage/             R2 client, key builders, signed URLs
-  packages/image-processing/    Validation, Sharp, watermark, limits
-  packages/payments/            Razorpay port, amount calc, verification
-  packages/config/              Env schema (server vs public)
+  apps/storefront/
+  apps/admin/                   Includes Inngest serve route
+  packages/ui/
+  packages/types/
+  packages/database/            Prisma schema lives here
+  packages/auth/
+  packages/storage/
+  packages/image-processing/
+  packages/payments/
+  packages/config/
   docs/
   AGENTS.md
 ```
 
-Prisma schema lives in `packages/database`. Root `prisma/` is not used.
-
-Import rule: apps import packages. Packages do not import apps. `packages/ui` does not import storage, payments, or database.
+Apps import packages. Packages do not import apps. `packages/ui` does not import storage, payments, or database.
 
 ---
 
 # 3. Application Boundaries
 
-## 3.1 `apps/storefront`
+`apps/storefront`: catalog, guest+auth cart, customer auth, checkout, purchases, download service calls. Must not run Sharp, verify Razorpay in the browser, or return master `storageKey`.
 
-Owns:
-
-- Public catalog pages
-- Auth pages (customer register/login)
-- Cart, checkout, account, purchases
-- Calling shared services
-
-Must not:
-
-- Mint master signed URLs except through the download service
-- Verify Razorpay signatures in client code
-- Run Sharp
-- Trust client-submitted prices
-
-## 3.2 `apps/admin`
-
-Owns:
-
-- Admin UI
-- Upload UX and processing status
-- Catalog, license, order, customer, download, audit screens
-
-Must not:
-
-- Expose working previews or masters to the public internet
-- Register admins through a public form
-- Bypass server-side ADMIN checks
+`apps/admin`: upload, processing status, catalog, licenses, orders, customers, downloads, audit. Must not expose working previews as public CDN objects or offer public admin registration.
 
 ---
 
 # 4. Package Boundaries
 
-| Package | Responsibility |
-|---|---|
-| `ui` | Presentational components. Display prices passed in as props. |
-| `types` | Shared types and Zod contracts. |
-| `database` | Prisma, migrations, repositories. No HTTP. |
-| `auth` | Auth.js + Prisma adapter, `getSession`, `requireUser`, `requireAdmin`. |
-| `storage` | Bucket mapping, key layout, presigned upload, signed download. |
-| `image-processing` | Validate, metadata, Sharp derivatives, watermark config. |
-| `payments` | Server amount calculation, Razorpay order create, signature/webhook verify. |
-| `config` | Typed env access. |
+Unchanged from Phase 0: `ui`, `types`, `database`, `auth`, `storage`, `image-processing`, `payments`, `config`.
+
+`storage` generates `publicUrl` and `signedUrl`. It never returns private `storageKey` to route handlers that serialize JSON to the browser.
 
 ---
 
@@ -111,47 +70,35 @@ Must not:
 ```text
 Browser
   → Next.js Server Component / Server Action / Route Handler
-    → requireUser / requireAdmin (packages/auth)
-    → Zod parse (packages/types)
-    → domain service (checkout, catalog, download, processing)
-      → packages/database
-      → packages/storage | packages/payments | packages/image-processing
+    → requireUser / requireAdmin when the route is protected
+    → Zod parse
+    → domain service
+      → database | storage | payments | image-processing
 ```
 
-Client components may call server actions. They must not contain pricing, entitlement, or payment rules.
+Guest browse and guest cart mutations do not require `requireUser`. Checkout, purchases, and downloads do.
 
 ---
 
 # 6. Authentication Flow
 
-Provider: Auth.js with Prisma adapter. One `User` table. Roles: `CUSTOMER`, `ADMIN`.
+Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`, `ADMIN`. No Supabase Auth.
 
 ## 6.1 Customer
 
-1. Register or log in on the storefront with email and password (Auth.js Credentials provider).
-2. Auth.js creates `User`, `Account`, and `Session`.
-3. `role = CUSTOMER`, `status = ACTIVE`.
-4. Email verification is not required in MVP.
-5. Session required for cart mutations, checkout, purchases, downloads.
+Email/password (Credentials). OAuth later. Email verification not required for MVP checkout.
 
-OAuth (Google and others) is future scope.
+Guest cart cookie (`guestToken`) is allowed before login. On login, merge guest cart into the user cart.
 
 ## 6.2 Admin
 
-1. No public admin registration.
-2. First admin is created by a secure bootstrap/seed process using server-only env (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD` or a one-time hashed password).
-3. Additional admins are provisioned by an existing admin or the same secure bootstrap, never a public “Register as Admin” page.
-4. Admin app and every admin server action call `requireAdmin()`.
-5. Frontend layout hiding is not authorization.
+Same identity system. `requireAdmin()` on every admin mutation. No public admin registration.
 
 ## 6.3 First-admin bootstrap
 
-- Run once against an empty database after migrations.
-- Create `User` with `role = ADMIN`.
-- Refuse to run if an admin already exists, unless an explicit force flag is used in a controlled environment.
-- Never expose bootstrap credentials to the client.
+CLI/seed after migrations using `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` (server env only). Refuse if an admin exists. Never put bootstrap credentials in source code. Additional admins are provisioned by an existing admin or the same controlled CLI — not a public form.
 
-Do not use Supabase Auth. Do not create a second user store.
+Storefront and admin are separate Auth.js deployments with distinct cookie names. `AUTH_SECRET` may be shared; `AUTH_URL` is per app.
 
 ---
 
@@ -159,238 +106,195 @@ Do not use Supabase Auth. Do not create a second user store.
 
 ```text
 Login → requireAdmin → Dashboard
-  → Upload master (presigned PUT to private R2)
-  → Asset DRAFT + UPLOADED
-  → ImageProcessingJob queued (Inngest)
-  → Worker: Sharp → derivatives → READY or FAILED
-  → Admin edits metadata, tags, AssetLicense prices
+  → Presigned upload to private R2
+  → Asset DRAFT + UPLOADED, title Untitled Asset, code from DailySequence
+  → ImageProcessingJob attempt 1 QUEUED
+  → Inngest (verified HTTP) → Sharp → READY or FAILED
+  → Metadata, default AssetLicense
   → Publish only if READY → PUBLISHED
   → Unpublish → DRAFT
   → Archive → ARCHIVED
 ```
 
-All of upload, publish, unpublish, archive, price edit, retry, and user/order views are audited.
+Audit **mutations** listed in `/docs/SECURITY.md`. Do not audit ordinary list/detail views.
+
+MVP has no in-place replace-master. Future replace-master must version a new master object.
 
 ---
 
 # 8. Upload Flow
 
-1. Admin selects a master file.
-2. Server validates type/size before issuing a presigned PUT (or validates immediately after upload).
-3. Client uploads directly to the private R2 master key. Original filename is discarded.
-4. Server creates `Asset` (`processingStatus = UPLOADED`, `productStatus = DRAFT`) and `AssetFile` MASTER.
-5. Server creates `ImageProcessingJob` (`QUEUED`) and emits a job event.
-6. HTTP request returns. Processing is not done in that request.
-
-Large files use multipart/resumable upload where required. UI shows upload progress, then processing status.
+1. Rate-limit upload initiation.
+2. Validate declared type/size; issue presigned PUT to the private master key (filename discarded; key is `private/masters/{assetId}/original.{ext}`).
+3. After upload, worker/job performs magic-byte + Sharp decode validation. If invalid, `processingStatus = FAILED` with a safe error; keep or delete the invalid object without publishing.
+4. Create Asset (`Untitled Asset`, generated `code`/`slug`), MASTER `AssetFile`, `ImageProcessingJob`.
+5. Return. Do not process 8K/16K TIFF in this HTTP request.
 
 ---
 
-# 9. Image Processing Flow
+# 9. Image Processing Flow (Inngest)
+
+`apps/admin` exposes `POST /api/inngest`. This is **not** an unrestricted public worker API. Inngest signing-key verification is required. Reject unsigned requests.
 
 ```text
-Upload HTTP
-  → store master
-  → enqueue job
-  → return
-
-Inngest worker
-  → set PROCESSING
-  → Sharp metadata
-  → thumbnail → public/thumbnails/{assetId}/thumbnail.webp
-  → working preview → private/previews/{assetId}/preview.webp
-  → watermark → public/previews/{assetId}/preview.webp
+Inngest function
+  → set job RUNNING, asset PROCESSING
+  → get master from private R2 via storageKey (server-side only)
+  → Sharp: metadata, thumbnail, working preview, watermarked preview
+  → upload derivatives
   → write AssetFile rows
-  → copy width/height/orientation/format/size onto Asset
-  → READY + job SUCCEEDED
+  → copy dimensions onto Asset
+  → job SUCCEEDED, asset READY
 ```
 
-On failure: keep master, `processingStatus = FAILED`, store a safe error code/message, allow retry. Never delete the master because a derivative failed.
-
-Never process 8K/16K TIFF masters inside a short-lived serverless upload request. The worker/job architecture is required in MVP. Inngest is the MVP runner. `packages/image-processing` stays independent of Inngest so the runner can be replaced later.
+Failure: keep master, job FAILED with error fields, asset FAILED. Retry inserts a **new** job with `attempt = max+1`.
 
 ---
 
 # 10. Catalog Publishing Flow
 
-Publish is allowed only when:
+Publish when READY, real title (not `Untitled Asset`), category, ≥1 tag, MASTER, WATERMARKED_PREVIEW, exactly one default active `AssetLicense`.
 
-- `processingStatus = READY`
-- Title present
-- Category assigned
-- At least one tag
-- Master file present
-- Watermarked preview present
-- At least one active `AssetLicense` with `pricePaise >= 0`
+Storefront: `PUBLISHED` + `READY`. Parent category pages include descendant category assets.
 
-Publish sets `productStatus = PUBLISHED` and `publishedAt`.
-
-Unpublish sets `productStatus = DRAFT` and clears `publishedAt`. Archive sets `ARCHIVED`. Storefront visibility follows `productStatus`; DRAFT and ARCHIVED are excluded.
-
-Storefront queries: `productStatus = PUBLISHED` AND `processingStatus = READY`.
-
-Purchased `OrderItem` rows continue to entitle download regardless of later product status.
+Unpublish → `DRAFT`, clear `publishedAt`. Archive → `ARCHIVED`. Purchases remain downloadable.
 
 ---
 
 # 11. Cart Flow
 
-`CartItem` is (`userId`, `assetId`, `licenseId`) with a unique constraint on that triple.
+Guest or authenticated.
 
-`quotedPricePaise` is a display snapshot only.
+Add to cart:
 
-```text
-Add to cart (authenticated)
-  → validate asset is PUBLISHED + READY
-  → validate AssetLicense is active
-  → upsert CartItem
-  → store quotedPricePaise from current AssetLicense (display)
+- If no license selected, use the asset’s default `AssetLicense`.
+- Validate `PUBLISHED` + `READY` and active license.
+- Upsert `CartItem` `(cartId, assetId, assetLicenseId)`.
+- Store `quotedUnitPriceIncludingTaxPaise` from current inclusive catalog price (display only).
 
-Checkout
-  → load cart items
-  → re-read AssetLicense prices from DB
-  → reject or require confirmation if the live price differs
-  → server calculates subtotal, tax, total
-  → never trust browser amounts
-```
-
-Remove deletes the `CartItem`. Update may change `licenseId` (still unique per user/asset/license).
+Login: merge guest cart into user cart.
 
 ---
 
-# 12. Checkout Flow (Cart and Buy Now)
+# 12. Checkout Flow
 
-Cart checkout and Buy Now use the same checkout service.
+Checkout requires `requireUser` (CUSTOMER). Guest must log in first (cart already merged).
 
-Buy Now passes a single `(assetId, licenseId)` list. It does not require persisting that line on `Cart`.
+Buy Now uses the same `CheckoutService` with one in-memory line.
 
 ```text
-CheckoutService.create({ userId, items: [{ assetId, licenseId }] })
-  → requireUser CUSTOMER
-  → for each item: load Asset + AssetLicense
+CheckoutService.create
+  → load items
   → validate availability (PUBLISHED + READY, license active)
-  → compute unitPricePaise from DB
-  → apply active TaxRate (snapshot rateBps)
-  → create Order PENDING_PAYMENT with immutable OrderItem snapshots
-  → create Payment CREATED
+  → load live AssetLicense.pricePaise (GST-inclusive)
+  → if live price ≠ quotedUnitPriceIncludingTaxPaise:
+       return PRICE_CHANGED with the new inclusive price
+       do not create Order or Razorpay order
+  → after customer confirms, quotes are updated and checkout is resubmitted
+  → compute tax with round-half-up from the single ACTIVE TaxRate
+  → create Order PENDING with immutable OrderItem snapshots
+  → create Payment PENDING
   → create Razorpay order for totalPaise INR
-  → store provider order id
-  → return Razorpay checkout payload (order id + public key id)
+  → return Razorpay checkout payload
 ```
+
+Never trust browser prices.
 
 ---
 
 # 13. Razorpay Verification Flow
 
 ```text
-Customer pays in Razorpay Checkout
-  → client reports payment ids to the server (untrusted)
-  → server verifies HMAC signature with RAZORPAY_KEY_SECRET
-  → server fetches/validates amount, currency, order id
-  → webhook also arrives (source of reconciliation)
-  → unique providerPaymentId prevents duplicate capture
-  → on success: Payment CAPTURED, Order PAID, paidAt set
-  → customer may download
+1. Server already created Razorpay order for the inclusive total.
+2. Customer pays in Checkout.
+3. Client sends payment ids (untrusted).
+4. Server verifies HMAC with RAZORPAY_KEY_SECRET and amount/currency/order id.
+5. Webhook is authoritative reconciliation.
+6. Map providerStatus → PaymentStatus (see DATABASE.md).
+7. On CAPTURED (idempotent on providerPaymentId):
+     Payment CAPTURED, Order PAID, paidAt set
+     download entitlement on
+8. Duplicate webhook: no-op.
 ```
 
-Never mark an order paid from client-reported success alone.
+Verified callback plus a server-side Razorpay payment fetch confirming `captured` **may** also set CAPTURED so the customer is not blocked if the webhook is delayed. Both paths are idempotent. Client-reported success alone never sets PAID.
 
-Webhook handler is idempotent: if `providerPaymentId` already captured, return success without mutating again.
+Failed attempt → Payment FAILED, Order FAILED. No entitlement. Customer starts a new checkout.
 
-Payment states: `CREATED`, `PENDING`, `AUTHORIZED`, `CAPTURED`, `FAILED`, `REFUNDED`.
+Explicit cancel or 30-minute unpaid expiry → Payment CANCELLED, Order CANCELLED.
 
-Provider enum is `RAZORPAY` in MVP. Stripe is future; keep `Payment.provider` extensible.
+Refund (Razorpay refund + webhook) → Payment REFUNDED, Order REFUNDED, entitlement revoked. Audit the mutation.
 
 ---
 
 # 14. Secure Download Flow
 
+TTL 300 seconds. Rate-limited.
+
 ```text
-Customer clicks Download
-  → requireUser
-  → load OrderItem by id (not by client storage key)
-  → Order.userId === session.userId
-  → Order.status === PAID
-  → Payment.status === CAPTURED
-  → license on the OrderItem entitles download
-  → master AssetFile exists
-  → signed GET URL, TTL 300 seconds
-  → insert Download row
-  → return { url, expiresInSeconds: 300 }
+requireUser
+→ load OrderItem by id (ignore client asset ids as authority)
+→ Order.userId === session.userId
+→ Order.status === PAID
+→ Payment.status === CAPTURED
+→ entitlement = this OrderItem license snapshot (not live AssetLicense.isActive)
+→ resolve MASTER storageKey server-side
+→ signedUrl GET, 300s
+→ insert Download
+→ return { url: signedUrl, expiresInSeconds: 300 }
 ```
 
-Never return R2 credentials, permanent master URLs, or storage keys.
+Never return `storageKey`, credentials, or a permanent private URL. A customer cannot obtain another customer’s master by swapping an asset id.
 
-Download rows support future quotas. MVP does not enforce a numeric cap.
-
-Unpublished or archived assets remain downloadable for entitled purchases.
+Admin working preview: `signedUrl` TTL 300 seconds, `requireAdmin` only.
 
 ---
 
 # 15. Storage Architecture
 
-Cloudflare R2. PostgreSQL stores keys, never bytes.
+Two R2 buckets. PostgreSQL stores `storageKey`.
 
-Two buckets:
+| Class | storageKey | Browser |
+|---|---|---|
+| MASTER | `private/masters/{assetId}/original.{ext}` | `signedUrl` after purchase only |
+| WORKING_PREVIEW | `private/previews/{assetId}/preview.webp` | Admin `signedUrl` only, 300s |
+| THUMBNAIL | `public/thumbnails/{assetId}/thumbnail.webp` | `publicUrl` via CDN |
+| WATERMARKED_PREVIEW | `public/previews/{assetId}/preview.webp` | `publicUrl` via CDN |
 
-- Private bucket: MASTER, WORKING_PREVIEW
-- Public bucket: THUMBNAIL, WATERMARKED_PREVIEW (Cloudflare CDN)
-
-Logical keys:
-
-```text
-private/masters/{assetId}/original.{ext}
-private/previews/{assetId}/preview.webp
-public/thumbnails/{assetId}/thumbnail.webp
-public/previews/{assetId}/preview.webp
-```
-
-Public CDN must not be bound to the private bucket.
+`publicUrl` = `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` + public key path. That URL is not a private key leak.
 
 ---
 
 # 16. Database Architecture
 
-PostgreSQL + Prisma. See `/docs/DATABASE.md` for the field-level schema.
-
-Money: integer paise. Currency: `INR`.
-
-Orders and payments are append-only after completion. Catalog prices may change without rewriting history.
-
-Search: PostgreSQL full-text search over title, description, tags, category, plus exact/trgm match on asset code. Catalog repository hides the engine so it can be replaced later.
+See `/docs/DATABASE.md`. Money: integer paise, GST-inclusive catalog, round-half-up extraction onto orders. Guest carts. DailySequence for codes and order numbers. One ACTIVE TaxRate. New ImageProcessingJob per retry.
 
 ---
 
 # 17. Deployment Topology
 
 ```text
-Vercel                    apps/storefront
-Vercel                    apps/admin
-Neon (managed PostgreSQL)   packages/database
-Cloudflare R2             masters + derivatives
-Cloudflare CDN            public thumbnails + watermarked previews only
-Inngest                   image processing jobs
-Razorpay                  payments
+Vercel          apps/storefront
+Vercel          apps/admin (+ /api/inngest)
+Neon            PostgreSQL
+Cloudflare R2   private + public buckets
+Cloudflare CDN  public derivatives only
+Inngest         processing orchestration
+Razorpay        payments
 ```
-
-Both apps are separate Vercel projects from the same monorepo.
 
 ---
 
 # 18. Environment Variable Categories
 
-Do not commit secret values.
-
-| Category | Server-only examples | Public examples |
+| Category | Server-only | Public |
 |---|---|---|
-| Database | `DATABASE_URL` (Neon) | — |
+| Database | `DATABASE_URL` | — |
 | Auth | `AUTH_SECRET`, `AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD` | — |
-| R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `R2_ENDPOINT` | `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` (CDN origin for thumbnails/previews only) |
+| R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `R2_ENDPOINT` | `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` |
 | Payments | `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | `NEXT_PUBLIC_RAZORPAY_KEY_ID` |
-| App URLs | `STOREFRONT_URL`, `ADMIN_URL` | `NEXT_PUBLIC_STOREFRONT_URL` if required |
+| App URLs | `STOREFRONT_URL`, `ADMIN_URL` | — |
 | Jobs | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` | — |
-
-Image size limits live in `packages/image-processing` configuration, not in public env.
 
 ---
 
@@ -398,24 +302,24 @@ Image size limits live in `packages/image-processing` configuration, not in publ
 
 | Boundary | Rule |
 |---|---|
-| Browser | Untrusted. No secrets, no master keys, no prices used for charging. |
-| Storefront server | May read public catalog and create customer orders. May mint master URLs only via download service after entitlement. |
-| Admin server | ADMIN role required. May request private working-preview URLs for review. |
-| Worker | Trusted. Reads master, writes derivatives. No public HTTP. |
-| Public CDN | Thumbnails and watermarked previews only. |
-| Private R2 | Masters and working previews. Signed access only. |
-| Razorpay webhook | Verified signature. Idempotent. |
+| Browser | Untrusted. May receive `publicUrl` and entitled `signedUrl` only. |
+| Storefront server | Catalog, cart, checkout, download service. |
+| Admin server | ADMIN role. Working-preview `signedUrl`. |
+| Inngest route | Signature-verified only. |
+| Public CDN | Thumbnails and watermarked previews. |
+| Private R2 | Masters and working previews. |
+| Razorpay webhook | Signature-verified, idempotent, authoritative reconciliation. |
 
-Rate limiting is required on authentication, upload, payment, and download endpoints.
+Rate limits: login, upload initiation, payment creation, download URL minting. See `/docs/SECURITY.md`.
 
 ---
 
 # 20. Site Content
 
-No CMS. Storefront homepage uses static/application configuration (hero copy, category highlights, newest assets query).
+No CMS. Static/application configuration plus newest published assets.
 
 ---
 
 # 21. Out of MVP
 
-Contributor marketplace, coupons, wishlist, reviews, subscriptions, credits, AI tagging, visual search, mobile apps, public API, Stripe, Elasticsearch, advanced CMS.
+Contributor marketplace, coupons, wishlist, reviews, subscriptions, credits, AI tagging, visual search, mobile apps, public API, Stripe, Elasticsearch, advanced CMS, in-place master replace, OAuth.

@@ -1,6 +1,6 @@
 # Bommastock — Project Constitution
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 This file is the highest-level project constitution. Implementation must follow it. Detailed schemas, flows, and security rules live in `/docs`. If a lower-level document conflicts with this constitution, stop and resolve the conflict before writing code.
 
@@ -61,9 +61,9 @@ MVP:
 - View image details
 - View thumbnail and watermarked preview only
 - Select a license
-- Add to cart
+- Add to cart (guest cart supported; merge on login)
 - Buy Now
-- Customer authentication
+- Customer authentication (email/password)
 - Razorpay checkout
 - Purchase history
 - Secure download of purchased masters
@@ -153,7 +153,15 @@ Logical storage classes:
 | WATERMARKED_PREVIEW | `public/previews/{assetId}/preview.webp` | Public CDN. Storefront detail pages. |
 | WORKING_PREVIEW | `private/previews/{assetId}/preview.webp` | Private. Admin/processing only. |
 
-Public storefront access is limited to thumbnail and watermarked preview.
+Distinguish three URL/key concepts:
+
+| Term | Meaning | Browser |
+|---|---|---|
+| `storageKey` | Internal R2 object key stored in PostgreSQL | Never sent for MASTER or WORKING_PREVIEW |
+| `publicUrl` | Application-generated Cloudflare CDN URL for public derivatives | Allowed for THUMBNAIL and WATERMARKED_PREVIEW |
+| `signedUrl` | Short-lived R2 GET URL (TTL 300 seconds) | Returned only after entitlement (customer master download) or admin working-preview review |
+
+Public storefront access is limited to thumbnail and watermarked preview `publicUrl` values.
 
 Never expose:
 
@@ -161,9 +169,9 @@ Never expose:
 - working (unwatermarked) preview
 - original filename as a storage path
 - storage credentials
-- storage object keys to the browser
+- MASTER or WORKING_PREVIEW `storageKey` values to the browser
 
-Customers must never receive a permanent URL to the master. Purchased files are delivered through authenticated temporary signed URLs with a 300-second TTL.
+Customers must never receive a permanent URL to the master. Purchased files are delivered through authenticated temporary `signedUrl` values with a 300-second TTL.
 
 ---
 
@@ -175,7 +183,7 @@ When an administrator uploads a master image, the system must automatically:
 2. Store the original privately in R2 without recompressing it.
 3. Create the Asset record with `processingStatus = UPLOADED` and `productStatus = DRAFT`.
 4. Create an `ImageProcessingJob`.
-5. Process asynchronously (never inside the upload HTTP request).
+5. Process asynchronously via Inngest (never inside the upload HTTP request). The Inngest HTTP endpoint is signature-verified, not an unrestricted public worker API.
 6. Extract metadata.
 7. Generate thumbnail.
 8. Generate optimized working preview.
@@ -183,6 +191,8 @@ When an administrator uploads a master image, the system must automatically:
 10. Store derivatives in R2.
 11. Save file metadata keys to PostgreSQL.
 12. Set `processingStatus = READY` or `FAILED`.
+
+Retry creates a **new** `ImageProcessingJob` row. Never overwrite a previous job. Never replace the master during processing.
 
 The administrator must not manually create derivatives.
 
@@ -257,7 +267,17 @@ Historical `OrderItem` price, title, license, tax, and currency snapshots must n
 
 Never trust payment status, price, or order amount received from the client.
 
-The server calculates the checkout amount from current `AssetLicense` rows, creates the Razorpay order, and marks the Bommastock order paid only after server-side verification and webhook reconciliation.
+If the live `AssetLicense` price differs from the cart quoted price, checkout returns `PRICE_CHANGED` and requires customer confirmation. Do not silently charge the old or the new price.
+
+The server calculates the checkout amount from current `AssetLicense` rows (GST-inclusive catalog prices). It creates the Razorpay order, verifies the payment server-side, and uses the Razorpay webhook as authoritative reconciliation.
+
+Internal **payment** statuses: `PENDING` | `AUTHORIZED` | `CAPTURED` | `FAILED` | `CANCELLED` | `REFUNDED`.
+
+Internal **order** statuses: `PENDING` | `PAID` | `FAILED` | `CANCELLED` | `REFUNDED`.
+
+Do not use `PENDING_PAYMENT` or `CREATED`.
+
+Download entitlement exists only when the order is `PAID` and the payment is `CAPTURED`.
 
 Payment secrets must never be exposed to frontend code. `RAZORPAY_KEY_ID` may be public; `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are server-only.
 
@@ -273,9 +293,9 @@ Before providing a master download:
 4. Verify payment is captured.
 5. Verify license entitlement on the order line.
 6. Verify the master file exists.
-7. Generate a signed R2 URL (TTL 300 seconds).
+7. Generate a `signedUrl` (TTL 300 seconds).
 8. Log the download.
-9. Return the temporary URL only.
+9. Return the temporary `signedUrl` only — never the master `storageKey`.
 
 ---
 
@@ -390,7 +410,9 @@ An asset may have one or more licenses through `AssetLicense`.
 
 MVP seeds the `STANDARD` license. Additional licenses (Extended, Editorial, Commercial, Enterprise) may be added later as data, not as UI hard-coding.
 
-The server calculates checkout amounts. `OrderItem` stores an immutable snapshot.
+Every published asset has exactly one default active `AssetLicense`. Add to cart without an explicit license uses that default.
+
+Catalog `pricePaise` is GST-inclusive. The server calculates checkout amounts. `OrderItem` stores an immutable tax-aware price snapshot.
 
 ---
 
@@ -399,11 +421,12 @@ The server calculates checkout amounts. `OrderItem` stores an immutable snapshot
 Auth.js + Prisma adapter. One `User` model. Roles: `CUSTOMER` | `ADMIN`.
 
 - Customer registration/login is public (email and password via Auth.js Credentials).
+- Guest cart is allowed; merge into the customer cart on login.
 - OAuth social login is future scope.
 - Email verification is not required for MVP checkout.
 - There is no public admin registration.
-- Admins are provisioned by a secure seed/bootstrap process.
-- Admin authorization is always enforced server-side.
+- Admins are provisioned by a secure seed/bootstrap process. Bootstrap credentials are environment/CLI only, never source code.
+- Admin authorization is always enforced server-side. Same User table; role is `ADMIN`.
 
 ---
 

@@ -1,263 +1,163 @@
 # Bommastock — Admin Flows
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
-Admin app: `apps/admin`. Every flow requires `requireAdmin()` on the server. There is no public admin registration.
+Admin app: `apps/admin`. Every mutation requires `requireAdmin()`. No public admin registration.
+
+Audit security-sensitive **mutations**. Do not audit ordinary list/detail views.
 
 ---
 
 # 1. Admin Login
 
 ```text
-Admin
-→ Login
-→ Auth.js authentication
-→ role === ADMIN and status === ACTIVE
-→ Admin dashboard
+Login → Auth.js → role ADMIN and status ACTIVE → Dashboard
 ```
 
-Invalid credentials: generic safe error. Do not reveal whether the email exists.
-
-Non-admin customers who reach `/login` on the admin app are denied after authentication.
+Generic error on failure. Non-admin users are denied after authentication.
 
 ---
 
 # 2. Admin Dashboard
 
-Show counts (queries, not a separate analytics product):
-
-- Total assets
-- Published (`productStatus = PUBLISHED`)
-- Draft (`productStatus = DRAFT`)
-- Archived (`productStatus = ARCHIVED`)
-- Processing (`processingStatus = PROCESSING` or `UPLOADED`)
-- Failed processing (`processingStatus = FAILED`)
-- Orders
-- Revenue (sum of PAID order totals)
-- Customers
-- Downloads
+Counts: total assets, PUBLISHED, DRAFT, ARCHIVED, processing (`UPLOADED`/`PROCESSING`), FAILED processing, orders, revenue (`PAID` totals), customers, downloads.
 
 ---
 
 # 3. Upload Asset
 
 ```text
-Images → Upload
-→ Select master file
-→ Client uploads to private R2 via presigned PUT
-→ Server creates Asset DRAFT + UPLOADED and MASTER AssetFile
-→ ImageProcessingJob QUEUED
-→ UI shows processing status
+Select master
+→ Rate-limited upload initiation
+→ Presigned PUT to private master key (original filename discarded)
+→ Asset DRAFT + UPLOADED
+→ title = Untitled Asset
+→ code = BS-YYYYMMDD-XXXXXX (DailySequence ASSET_CODE)
+→ slug from title (unique)
+→ MASTER AssetFile.storageKey stored server-side
+→ ImageProcessingJob attempt 1 QUEUED
 ```
 
-Original filename is discarded. Validation uses MIME, extension, magic bytes, size (512 MiB), dimensions (20,000 px / 250 MP), and decodability.
+Validation: MIME, extension, magic bytes, 512 MiB, 20,000 px, 250 MP, Sharp decode. Supported: JPEG, PNG, WebP, TIFF.
 
 ---
 
 # 4. Image Processing
 
-Worker (Inngest) runs `processAsset`:
+Inngest (signature-verified `/api/inngest` on the admin app) runs `processAsset`:
 
 ```text
-PROCESSING
-→ Extract metadata
+RUNNING / PROCESSING
+→ Metadata
 → Thumbnail (public)
 → Working preview (private)
 → Watermarked preview (public)
-→ READY
+→ READY / SUCCEEDED
 ```
 
-Display `processingStatus` and job error category on failure.
-
-Admin may open the private working preview for quality review. That URL is a short-lived signed URL, never a public CDN object.
+Admin may open working preview via `signedUrl` TTL **300 seconds**. Never a public CDN object. Never send `storageKey` to the browser.
 
 ---
 
 # 5. Asset Editing
 
-Admin can edit:
+Editable: title, description, category tree, tags, `AssetLicense` prices (GST-inclusive paise), default license flag, publish/unpublish/archive.
 
-- Title
-- Description
-- Category (tree; child category is subcategory)
-- Tags
-- Active licenses and `pricePaise` per license
-- `productStatus` via publish / unpublish / archive actions
+`Asset.code` is immutable.
 
-Master replacement requires an explicit replace-master action, which re-enters `UPLOADED` and queues a new job. Do not overwrite the previous master until the new file is stored; keep purchase downloads pointing at the current MASTER `AssetFile` until replacement succeeds.
+`Asset.slug` may change; uniqueness enforced.
 
-Prices are database values. Admin UI must not hard-code license names or amounts.
+MVP does **not** replace the master in place. A future replace-master feature must create a new versioned master object, not overwrite the existing R2 object silently.
 
 ---
 
 # 6. Publishing
 
-```text
-Review
-→ Inspect watermarked preview
-→ Validate required metadata
-→ Publish
-```
-
 Required:
 
 - `processingStatus = READY`
-- Title
+- Title other than `Untitled Asset`
 - Category
-- At least one tag
-- At least one active AssetLicense with price
-- MASTER file
-- WATERMARKED_PREVIEW file
+- ≥1 tag
+- Exactly one default active `AssetLicense` with GST-inclusive `pricePaise`
+- MASTER and WATERMARKED_PREVIEW files
 
-Publish sets `productStatus = PUBLISHED` and `publishedAt`.
-
-Write an AuditLog row.
+Sets `PUBLISHED` and `publishedAt`. Audit.
 
 ---
 
 # 7. Unpublish
 
-Unpublish sets `productStatus = DRAFT` and clears `publishedAt`.
-
-Effects:
-
-- Hidden from public search and categories
-- Existing purchases remain valid
-- Downloads remain valid
-
-There is no separate `UNPUBLISHED` enum value.
+`productStatus = DRAFT`, clear `publishedAt`. Hidden from storefront. Purchases remain valid. Audit. No `UNPUBLISHED` enum.
 
 ---
 
 # 8. Archive
 
-Archive sets `productStatus = ARCHIVED`.
-
-Effects:
-
-- Hidden from the public marketplace
-- Hidden from normal admin “active catalog” lists (still findable in archived filter)
-- Historical orders unchanged
-- Downloads remain valid
+`productStatus = ARCHIVED`. Hidden from storefront. Orders and downloads remain valid. Audit.
 
 ---
 
 # 9. Category Management
 
-Admin can:
-
-- Create root category (`parentId = null`)
-- Create child category (`parentId` set) — this is a subcategory
-- Edit name, slug, description
-- Reorder (`sortOrder`)
-- Activate / deactivate
-
-Do not delete categories that have children or assets. Deactivate or reassign first.
-
-Example:
-
-- Gods & Deities
-  - Lord Ganesha
-  - Lord Shiva
-  - Goddess Lakshmi
-  - Lord Vishnu
+Root `parentId = null`; children have `parentId`. Storefront parent browse includes descendants. Do not delete in-use categories; deactivate.
 
 ---
 
-# 10. License and Pricing Management
+# 10. License and Pricing
 
-Admin can:
-
-- View licenses (MVP seed: STANDARD)
-- Add future licenses as rows (Extended, Editorial, Commercial, Enterprise) without a code change to pricing UI
-- Set `AssetLicense.pricePaise` per asset
-- Activate / deactivate an asset license
-
-Changing a price does not rewrite historical `OrderItem` rows.
+Seed STANDARD. Set GST-inclusive `pricePaise`. Mark exactly one `isDefault` per asset. Price changes do not rewrite `OrderItem`. Audit price and license mutations.
 
 ---
 
 # 11. Order Management
 
-Admin can view:
+View order number, customer, snapshot lines (before-tax, tax, inclusive), payment status, order status, date.
 
-- Order number
-- Customer (name/email as needed; avoid extra PII)
-- Items (snapshot title, license, amounts)
-- Amounts in paise, displayed as INR
-- Payment status
-- Order status
-- Date
-
-Admin cannot edit snapshot prices.
+Cannot edit snapshots. Order status changes and refunds are audited.
 
 ---
 
 # 12. Customer Management
 
-Admin can view:
-
-- Name
-- Email
-- Registration date
-- Purchase count
-- Total spend
-- Account status (`ACTIVE` / `DISABLED`)
-
-Admin may disable a customer account. Disabled users cannot authenticate.
-
-Do not expose password hashes.
+View name, email, dates, purchase count, spend, `ACTIVE`/`DISABLED`. May disable. Audit. Never expose password hashes.
 
 ---
 
 # 13. Download Records
 
-Admin can view download log rows: customer, asset, order, timestamp.
-
-Do not display signed URLs or storage keys.
+View customer, asset, order, timestamp. Do not display `signedUrl` or `storageKey`.
 
 ---
 
-# 14. Processing Failure
+# 14. Processing Failure and Retry
 
-Display:
-
-- Asset
-- `processingStatus = FAILED`
-- Error category / safe message
-- Retry action
-
-Retry queues a new `ImageProcessingJob`. The master is not deleted.
+Show FAILED status and safe error. Retry **inserts a new** `ImageProcessingJob` with `attempt = previous max + 1`. Previous jobs are retained. Master is not replaced.
 
 ---
 
-# 15. Audit Log
+# 15. Refunds
 
-Admin actions that must be logged:
-
-- Login (and failed login)
-- Upload
-- Retry processing
-- Publish / unpublish / archive
-- Price change
-- License change
-- Customer disable
-- Order/payment viewing is optional; mutations are required
-
-Never log passwords, secrets, payment secrets, or full private URLs.
+Admin-initiated Razorpay refund (when implemented in later phases of MVP ops): Payment `REFUNDED`, Order `REFUNDED`, download entitlement revoked. Audit.
 
 ---
 
-# 16. Bulk Operations
+# 16. Audit Log
 
-Future: bulk publish, unpublish, category assignment, tagging, pricing.
+Log mutations: asset create/update, upload, retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin role changes, customer disable, login failures.
+
+Do not log every view. Never log passwords, secrets, payment secrets, storage credentials, tokens, private `storageKey`, or `signedUrl`.
+
+IP and user-agent may be stored on `AuditLog` per privacy policy.
 
 ---
 
-# 17. First Admin Bootstrap
+# 17. Bulk Operations
 
-Not a UI flow on the public internet.
+Future.
 
-After migrations, a one-time seed/bootstrap creates the first `User` with `role = ADMIN` from server env (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`). It refuses to run if an admin already exists.
+---
 
-Additional admins are provisioned by an existing admin or the same controlled process. Never “Register as Admin”.
+# 18. First Admin Bootstrap
+
+CLI/seed from `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD`. Refuse if an admin exists. Credentials never in source. Additional admins via controlled CLI or existing admin provisioning — never “Register as Admin”.

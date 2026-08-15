@@ -1,249 +1,149 @@
 # Bommastock — Image Processing Pipeline
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 ---
 
 # 1. Objective
 
-Automatically transform an uploaded high-resolution master into secure, optimized derivatives.
-
-The administrator uploads only the master. The system generates all derivatives. The administrator never creates thumbnails, previews, or watermarks by hand.
-
-Processing runs asynchronously. It must not run inside the upload HTTP request.
+Automatically transform an uploaded master into secure derivatives. Admin uploads only the master. Processing is asynchronous via Inngest. It must not run inside the upload HTTP request.
 
 ---
 
 # 2. Image Lifecycle
 
 ```text
-Admin selects master
-→ Validate
-→ Store MASTER in private R2 (unmodified)
-→ Create Asset (processingStatus=UPLOADED, productStatus=DRAFT)
-→ Create ImageProcessingJob (QUEUED)
-→ Return to admin UI
-→ Worker sets PROCESSING
-→ Metadata extraction
+Validate (type/size) → presigned PUT to private master
+→ Asset UPLOADED + DRAFT (title Untitled Asset, code from DailySequence)
+→ ImageProcessingJob QUEUED (new row)
+→ Inngest (signature-verified HTTP)
+→ PROCESSING
+→ Magic bytes + Sharp decode
+→ Metadata
 → Thumbnail (public)
-→ Working preview (private, unwatermarked)
+→ Working preview (private)
 → Watermarked preview (public)
-→ Update AssetFile rows and Asset dimensions
-→ processingStatus=READY (or FAILED)
-→ Admin may publish only when READY
+→ AssetFile rows (storageKey server-side)
+→ READY or FAILED
+→ Publish is a separate product action
 ```
-
-Publishing is a separate product action. See `productStatus` in `/docs/PRODUCT_REQUIREMENTS.md`.
 
 ---
 
-# 3. Storage Classes and Keys
+# 3. storageKey, publicUrl, signedUrl
 
-| Class | Key | Access | Format |
-|---|---|---|---|
-| MASTER | `private/masters/{assetId}/original.{ext}` | Private | Original (jpeg/png/tiff/webp) |
-| THUMBNAIL | `public/thumbnails/{assetId}/thumbnail.webp` | Public CDN | WebP |
-| WATERMARKED_PREVIEW | `public/previews/{assetId}/preview.webp` | Public CDN | WebP |
-| WORKING_PREVIEW | `private/previews/{assetId}/preview.webp` | Private | WebP |
+| Term | Use |
+|---|---|
+| `storageKey` | PostgreSQL / R2 internal key. Never sent to the browser for MASTER or WORKING_PREVIEW. |
+| `publicUrl` | CDN URL for THUMBNAIL and WATERMARKED_PREVIEW. |
+| `signedUrl` | 300s GET for entitled master download or admin working preview. |
 
-Do not use original filenames in keys. Do not use `assetCode` in keys. Object keys use `assetId` and file class only. `assetCode` is a public catalog field on Asset.
+| Class | storageKey | Browser |
+|---|---|---|
+| MASTER | `private/masters/{assetId}/original.{ext}` | `signedUrl` after purchase |
+| THUMBNAIL | `public/thumbnails/{assetId}/thumbnail.webp` | `publicUrl` |
+| WATERMARKED_PREVIEW | `public/previews/{assetId}/preview.webp` | `publicUrl` |
+| WORKING_PREVIEW | `private/previews/{assetId}/preview.webp` | Admin `signedUrl` 300s |
 
-There is no public unwatermarked large preview.
+Do not use original filenames or `assetCode` in keys.
 
 ---
 
 # 4. Master Image
 
-The master is the original high-resolution file (including 8K/16K TIFF/PNG/JPEG/WebP).
+Private, never recompressed during optimization, never overwritten by a retry. Source of truth for retries and customer download (`signedUrl` 300s).
 
-Rules:
-
-- Private
-- Never recompressed or overwritten during optimization
-- Source of truth for later retries
-- Downloadable only after verified purchase via a 300-second signed URL
+MVP has no in-place replace-master. Future replace-master must add a new versioned object.
 
 ---
 
 # 5. Validation
 
-Reject before or immediately after upload if any check fails:
+Reject or fail the job if any check fails:
 
-- MIME type allowlist: `image/jpeg`, `image/png`, `image/tiff`, `image/webp`
-- Extension allowlist: `jpg`, `jpeg`, `png`, `tif`, `tiff`, `webp`
-- File signature / magic bytes (do not trust the client MIME)
-- Decodability (Sharp must read the file)
-- Maximum upload size: 512 MiB
-- Maximum longest edge: 20,000 px
-- Maximum megapixels: 250
+- MIME allowlist: `image/jpeg`, `image/png`, `image/tiff`, `image/webp`
+- Extension: `jpg`, `jpeg`, `png`, `tif`, `tiff`, `webp`
+- Magic bytes / file signature where practical
+- Sharp decode
+- Max size 512 MiB
+- Max longest edge 20,000 px
+- Max 250 megapixels
+- Filename sanitization: original name is discarded; it is never a storage path
 
-These limits live in `packages/image-processing` configuration, not in UI components.
+CMYK: accept only if Sharp can decode and convert derivatives to sRGB. If not, fail the job with a clear processing error. Leave the master unchanged.
 
-Do not execute uploaded files. Do not use the original filename as a path.
+Limits live in `packages/image-processing`.
 
 ---
 
 # 6. Metadata Extraction
 
-From the master, persist on Asset and MASTER AssetFile:
-
-- Width
-- Height
-- Orientation (`LANDSCAPE` if width > height, `PORTRAIT` if height > width, `SQUARE` otherwise)
-- Format and MIME
-- File size bytes
-- Color space where available
-
-EXIF may be read for admin diagnostics. Strip EXIF (and GPS) from all public derivatives and from the working preview.
+Width, height, orientation (`LANDSCAPE` / `PORTRAIT` / `SQUARE`), format, MIME, size. Strip EXIF/GPS from derivatives and working preview.
 
 ---
 
-# 7. Thumbnail
+# 7. Derivatives
 
-- Longest edge: 480 px
-- Format: WebP
-- Purpose: gallery cards, category pages, admin lists, cart thumbnails
-- Public CDN
-- Small enough that an unwatermarked thumbnail is acceptable. It is not a substitute for the master.
+- Thumbnail: longest edge 480 px, WebP, public
+- Working preview: 1600 px, WebP, private, unwatermarked
+- Watermarked preview: from working preview, 1600 px, WebP, public, repeated diagonal Bommastock watermark configured in `packages/image-processing`
 
----
-
-# 8. Working Preview
-
-- Longest edge: 1600 px
-- Format: WebP
-- Unwatermarked
-- Private R2 only
-- Source for the watermarked preview
-- Admin review only
-- Never sent to the storefront
-
----
-
-# 9. Watermarked Preview
-
-- Generated from the working preview
-- Longest edge: 1600 px
-- Format: WebP
-- Public CDN
-- Used on storefront detail pages
-
-Watermark requirements:
-
-- Visible
-- Difficult to crop out
-- Must not completely destroy visual evaluation
-- Repeated diagonal pattern
-- Consistent Bommastock branding
-
-Watermark parameters (text or mark image, opacity, scale, spacing, angle) are configured in `packages/image-processing`. UI components must not draw watermarks.
-
----
-
-# 10. Web Optimization
-
-Use Sharp.
+CMYK masters: convert **derivatives** to sRGB; do not recompress the master.
 
 MVP derivative format: WebP only.
 
-Quality must remain suitable for evaluating the artwork. Do not aggressively crush previews.
+---
 
-CMYK masters: convert derivatives to sRGB. Leave the master unchanged.
+# 8. Processing Status
 
-AVIF is future, not MVP.
+`UPLOADED` | `PROCESSING` | `READY` | `FAILED` — independent of `productStatus`.
 
 ---
 
-# 11. Responsive Delivery
+# 9. Failure and Retry
 
-Storefront requests the public thumbnail or watermarked preview. CDN may resize further.
+Keep the master. Set asset `FAILED`. Store safe error on **that** job row.
 
-Approximate display widths:
-
-- Mobile gallery: thumbnail
-- Tablet/desktop gallery: thumbnail
-- Detail page: watermarked preview (1600 px source)
-
-The storefront must never request MASTER or WORKING_PREVIEW.
+Retry: insert a **new** `ImageProcessingJob` with `attempt = max(attempt)+1`. Do not overwrite the previous job. Do not replace the master.
 
 ---
 
-# 12. Processing Status
+# 10. Inngest
 
-Asset `processingStatus` (independent of `productStatus`):
+MVP orchestrator: Inngest.
 
-| Value | Meaning |
-|---|---|
-| UPLOADED | Master stored, job not complete |
-| PROCESSING | Worker running |
-| READY | Derivatives stored; eligible to publish |
-| FAILED | Job failed; master retained; retry allowed |
+`apps/admin` `POST /api/inngest` is protected by Inngest’s signing verification. It is not an unrestricted public worker API.
 
-Admin UI must show this status. `productStatus` remains `DRAFT` until an admin publishes.
+Function steps: receive job → load master from R2 by `storageKey` (server) → Sharp thumbnail, preview, watermark → upload derivatives → update job → update asset `processingStatus` → record errors on failure.
+
+`packages/image-processing` does not import Inngest.
 
 ---
 
-# 13. Failure Handling
+# 11. Duplicate Detection
 
-If processing fails:
-
-- Keep the master
-- Set `processingStatus = FAILED`
-- Store safe `errorCode` and `errorMessage` on `ImageProcessingJob`
-- Allow admin retry (new job; never overwrite the master)
-
-Do not delete the master because a derivative failed.
+Future checksum. Not MVP.
 
 ---
 
-# 14. Job Architecture
+# 12. Security
 
-MVP runner: Inngest.
-
-`packages/image-processing` exposes `processAsset(assetId)` and does not import Inngest. The admin app (or a worker entry) enqueues the job. The worker calls the package.
-
-This is required in MVP. Do not process large masters inside the upload serverless request.
+Never put master `storageKey` in frontend HTML/JS. Never bind the private bucket to the public CDN. Public files: thumbnail and watermarked preview only.
 
 ---
 
-# 15. Duplicate Detection
+# 13. Future CDN
 
-Future: checksum/hash of the master. Not in MVP.
-
----
-
-# 16. Security
-
-Never:
-
-- Expose the private bucket or working-preview prefix on the CDN
-- Put a master URL in frontend HTML or JS
-- Return master or working-preview storage keys to unauthenticated users or to the storefront
-- Use predictable public URLs for masters
-
-Public files are thumbnail and watermarked preview only.
+Key + file-class model allows later transformation CDNs without changing entitlement. Not MVP.
 
 ---
 
-# 17. Future CDN Optimization
+# 14. Large Files
 
-The storage key + file class model allows later Cloudflare Transformations, Cloudflare Images, Cloudinary, or Imgix without changing checkout or entitlement logic. Do not integrate those in MVP.
-
----
-
-# 18. Large Files
-
-Use multipart/resumable uploads to private R2 when the file is large.
-
-UI must show:
-
-- Upload progress
-- Processing status (UPLOADED / PROCESSING / READY / FAILED)
-- Success
-- Failure with retry
+Multipart/resumable to private R2 when needed. UI: upload progress and `processingStatus`.
 
 ---
 
-# 19. Original Preservation
+# 15. Original Preservation
 
-Never overwrite the original master during optimization. The master is the source of truth for retries and for customer download.
+Never overwrite the original master during optimization or retry.

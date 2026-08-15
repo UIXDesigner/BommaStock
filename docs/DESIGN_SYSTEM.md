@@ -1,6 +1,6 @@
 # Bommastock — Design System
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 ---
 
@@ -55,7 +55,7 @@ Priority:
 1. Public thumbnail
 2. Title
 3. Metadata
-4. Display price (paise passed in from the catalog service)
+4. Display price (GST-inclusive paise for the default license, passed in from the catalog service)
 5. Actions
 
 Hover may include quick preview of the **watermarked** image and Add to cart.
@@ -157,6 +157,6 @@ Examples:
 - Modal
 - Toast
 
-`LicenseSelector` and `PriceDisplay` must not hard-code license codes, amounts, or GST percentages. The catalog service chooses which `AssetLicense` price to pass to gallery cards (the STANDARD row when it is active; otherwise the first active license by `sortOrder`).
+`LicenseSelector` and `PriceDisplay` must not hard-code license codes, amounts, or GST percentages. Gallery cards receive the **default** `AssetLicense` GST-inclusive price from the catalog service.
 
 Admin tables show `processingStatus` and `productStatus` as two badges, never as one combined list.

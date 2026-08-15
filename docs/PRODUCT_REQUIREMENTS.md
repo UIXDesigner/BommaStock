@@ -1,6 +1,6 @@
 # Bommastock — Product Requirements Document
 
-Version: Phase 0 (locked)
+Version: Phase 0.1 (locked)
 
 ---
 
@@ -94,7 +94,7 @@ Login
 - Purchase history
 - Secure master download
 
-Cart and checkout require an authenticated customer. Browsing and search do not.
+Cart and checkout: guest cart is allowed; checkout requires an authenticated customer. Browsing and search do not. Guest cart merges on login.
 
 ## 7.2 Admin
 
@@ -147,9 +147,9 @@ Every marketplace image is an Asset.
 Each asset has:
 
 - Unique asset ID
-- Unique image code (server-generated, public catalog identifier)
-- Title
-- Description
+- Unique image code `BS-YYYYMMDD-XXXXXX` (immutable after creation)
+- URL slug generated from title (unique; admin may change)
+- Title (placeholder `Untitled Asset` until metadata is supplied)
 - Category (tree; subcategory is a child category)
 - Tags
 - One or more licenses with prices (`AssetLicense`)
@@ -196,12 +196,16 @@ MVP uses license-based pricing.
 
 - Seed license: `STANDARD`.
 - An asset may have one or more `AssetLicense` rows.
+- Exactly one default active license per published asset (`isDefault`).
+- Add to cart without an explicit license uses the default license.
 - Price is stored as integer paise (`pricePaise`) with `currency = INR`.
+- Catalog prices are **GST-inclusive**.
 - UI components must not hard-code prices or license lists.
 - The customer-facing price is a display value.
-- The server calculates the authoritative checkout amount from the database at checkout time.
-- The catalog service supplies gallery-card prices (STANDARD `AssetLicense` when active; otherwise the first active license by `sortOrder`).
-- `OrderItem` stores an immutable snapshot of title, license, unit price, tax, currency, and totals.
+- At checkout, if the live price differs from the cart quote, return `PRICE_CHANGED` and require confirmation. Never charge silently.
+- The server calculates the authoritative checkout amount from the database.
+- The catalog service supplies gallery-card prices (default `AssetLicense`).
+- `OrderItem` stores an immutable snapshot: before-tax unit price, tax rate, tax amount, inclusive unit price, line total.
 
 Future licenses (data, not new pricing engines): Extended, Editorial, Commercial, Enterprise.
 
@@ -213,7 +217,9 @@ Future pricing models (out of MVP): subscriptions, credits, bundles.
 
 India-first. Currency: INR.
 
-MVP supports GST as a configurable tax rate stored in the database (`TaxRate`), snapshotted onto the order at checkout.
+MVP supports GST as a configurable tax rate stored in the database (`TaxRate`). Exactly one `TaxRate` may be `ACTIVE`.
+
+Catalog prices are GST-inclusive. Orders snapshot extracted tax using integer paise and round-half-up.
 
 Do not hard-code a GST percentage in application code.
 
@@ -237,7 +243,7 @@ Repository/service layer must be replaceable later by a dedicated search engine.
 
 MVP filters:
 
-- Category (including selected child categories)
+- Category (a parent includes descendant categories’ assets)
 - Orientation (landscape, portrait, square)
 - Sort: newest
 

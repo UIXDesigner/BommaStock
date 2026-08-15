@@ -1,6 +1,6 @@
 # Bommastock — Admin Flows
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
 Admin app: `apps/admin`. Every mutation requires `requireAdmin()`. No public admin registration.
 
@@ -102,6 +102,8 @@ Sets `PUBLISHED` and `publishedAt`. Audit.
 
 Root `parentId = null`; children have `parentId`. Storefront parent browse includes descendants. Do not delete in-use categories; deactivate.
 
+Deactivating a category (or ancestor) hides its published assets from storefront discovery without changing `productStatus`. Paid downloads remain valid.
+
 ---
 
 # 10. License and Pricing
@@ -138,13 +140,13 @@ Show FAILED status and safe error. Retry **inserts a new** `ImageProcessingJob` 
 
 # 15. Refunds
 
-Admin-initiated Razorpay refund (when implemented in later phases of MVP ops): Payment `REFUNDED`, Order `REFUNDED`, download entitlement revoked. Audit.
+Full refunds are **in MVP**. Admin confirms; server calls Razorpay refund; webhook or API confirm sets Payment `REFUNDED`, Order `REFUNDED`, download entitlement revoked. Audit `ORDER_REFUND`. Partial refunds are out of MVP.
 
 ---
 
 # 16. Audit Log
 
-Log mutations: asset create/update, upload, retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin role changes, customer disable, login failures.
+Log mutations: asset create/update, upload, retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin user create/role change, customer disable, login failures.
 
 Do not log every view. Never log passwords, secrets, payment secrets, storage credentials, tokens, private `storageKey`, or `signedUrl`.
 
@@ -160,4 +162,6 @@ Future.
 
 # 18. First Admin Bootstrap
 
-CLI/seed from `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD`. Refuse if an admin exists. Credentials never in source. Additional admins via controlled CLI or existing admin provisioning — never “Register as Admin”.
+First admin: CLI/seed from `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` (plaintext env, Argon2id at insert). Refuse if an admin exists.
+
+Additional admins: existing ADMIN creates them in the admin app (email + temporary password, min 10). Audit `ADMIN_USER_CREATE`. Never “Register as Admin”.

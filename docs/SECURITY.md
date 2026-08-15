@@ -1,6 +1,6 @@
 # Bommastock — Security Specification
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
 ---
 
@@ -16,7 +16,7 @@ Assume every client request can be manipulated. Prices, payment status, and down
 
 Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`, `ADMIN`. No Supabase Auth.
 
-- Customer: email/password. OAuth later. Email verification not required for MVP checkout.
+- Customer: email/password. Argon2id. Change-password and forgot-password are MVP. OAuth later. Email verification not required for MVP checkout.
 - Guest cart allowed; checkout requires login.
 - No public admin registration.
 - First admin: env/CLI bootstrap (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`). Refuse if an admin exists. Credentials never in source.
@@ -62,7 +62,7 @@ TTL: 300 seconds.
 6. Resolve MASTER `storageKey` server-side.
 7. Generate `signedUrl`.
 8. Insert `Download`.
-9. Return `{ url, expiresInSeconds: 300 }` only.
+9. Return `{ url, expiresInSeconds: 300 }` only. Prefer `Content-Disposition` filename `{assetCode}_{licenseCode}.{ext}`.
 
 A customer cannot download another customer’s asset by changing an asset id.
 
@@ -91,7 +91,11 @@ Never trust client-reported success.
 
 Failed attempt → `FAILED`. Unpaid cancel/expiry → `CANCELLED`. Refund → `REFUNDED` and entitlement revoked.
 
-`RAZORPAY_KEY_ID` may be public. Secrets are server-only.
+Storefront webhook: `POST /api/payments/razorpay/webhook`. Verify `X-Razorpay-Signature`.
+
+Razorpay orders use `payment_capture: 1`. Entitlement requires `CAPTURED`, not `AUTHORIZED`.
+
+Zero-amount orders skip Razorpay and are captured server-side after the same checks.
 
 ---
 
@@ -127,7 +131,7 @@ Application-level (route handlers / middleware). MVP does not require Redis. Per
 
 | Action | Limit | Key |
 |---|---|---|
-| Login / register | 5 / 15 minutes | IP + email |
+| Login / register / forgot-password | 5 / 15 minutes | IP + email |
 | Upload initiation | 30 / hour | Admin user id |
 | Payment order creation | 10 / 15 minutes | User id |
 | Download `signedUrl` minting | 20 / 15 minutes | User id |
@@ -140,7 +144,7 @@ Also apply coarse limits to search and admin APIs.
 
 Audit **mutations**, not ordinary reads.
 
-Must audit: asset create/update, upload, processing retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin role changes, customer account disable, login failures.
+Must audit: asset create/update, upload, processing retry, publish/unpublish/archive, license/price changes, order status changes, refunds, admin user create/role change, customer account disable, login failures.
 
 Never log: passwords, hashes, `AUTH_SECRET`, R2 keys, Razorpay secrets, tokens, full `signedUrl`, private `storageKey`, card data.
 

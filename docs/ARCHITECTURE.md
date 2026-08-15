@@ -1,8 +1,8 @@
 # Bommastock — System Architecture
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
-This document is the implementation architecture. It must stay consistent with `AGENTS.md` and `/docs/DATABASE.md`.
+This document is the implementation architecture. It must stay consistent with `AGENTS.md`, `/docs/DATABASE.md`, and `/docs/DECISIONS.md`.
 
 Do not place business logic in React components. Do not duplicate domain rules between `apps/storefront` and `apps/admin`.
 
@@ -13,17 +13,18 @@ Do not place business logic in React components. Do not duplicate domain rules b
 Two Next.js applications share PostgreSQL, Auth.js, Cloudflare R2, and domain packages.
 
 ```text
-Customer  →  apps/storefront  →  packages (auth, database, payments, storage, types, ui)
-Admin     →  apps/admin       →  packages (auth, database, image-processing, storage, types, ui)
+Customer  →  apps/storefront  →  packages (auth, commerce, database, payments, storage, types, ui)
+Admin     →  apps/admin       →  packages (auth, commerce, database, image-processing, storage, types, ui)
                               →  POST /api/inngest (Inngest-verified)
 
 packages/database  →  PostgreSQL (Neon)
+packages/commerce  →  cart, checkout, entitlement, publish, GST math
 packages/storage   →  Cloudflare R2
-packages/payments  →  Razorpay
+packages/payments  →  Razorpay HTTP
 packages/image-processing + Inngest  →  Sharp  →  R2 + PostgreSQL
 ```
 
-Domain services (`CheckoutService`, catalog, download, publish, processing enqueue) live in the owning package (`payments`, `database` repositories, `storage`, `image-processing`) and are called from server actions/route handlers. They do not live in React components.
+Domain services live in `packages/commerce` (cart, checkout, entitlement, publish). Razorpay I/O lives in `packages/payments`. They are called from server actions/route handlers, never from React components.
 
 ---
 
@@ -40,6 +41,7 @@ bommastock_v1/
   packages/storage/
   packages/image-processing/
   packages/payments/
+  packages/commerce/            Cart, checkout, entitlement, publish, GST
   packages/config/
   docs/
   AGENTS.md
@@ -59,7 +61,7 @@ Apps import packages. Packages do not import apps. `packages/ui` does not import
 
 # 4. Package Boundaries
 
-Unchanged from Phase 0: `ui`, `types`, `database`, `auth`, `storage`, `image-processing`, `payments`, `config`.
+Packages: `ui`, `types`, `database`, `auth`, `storage`, `image-processing`, `payments`, `commerce`, `config`.
 
 `storage` generates `publicUrl` and `signedUrl`. It never returns private `storageKey` to route handlers that serialize JSON to the browser.
 
@@ -86,19 +88,26 @@ Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`
 
 ## 6.1 Customer
 
-Email/password (Credentials). OAuth later. Email verification not required for MVP checkout.
+Email/password (Credentials). Argon2id hashes. Change-password and forgot-password are MVP (D027). OAuth later. Email verification not required for MVP checkout.
 
 Guest cart cookie (`guestToken`) is allowed before login. On login, merge guest cart into the user cart.
 
 ## 6.2 Admin
 
-Same identity system. `requireAdmin()` on every admin mutation. No public admin registration.
+Same identity system. `requireAdmin()` on every admin mutation. No public admin registration. Existing admins may create additional admins in the admin app (D029).
 
 ## 6.3 First-admin bootstrap
 
-CLI/seed after migrations using `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` (server env only). Refuse if an admin exists. Never put bootstrap credentials in source code. Additional admins are provisioned by an existing admin or the same controlled CLI — not a public form.
+CLI/seed after migrations using `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` (plaintext env, hashed Argon2id on insert). Refuse if an admin exists. Never put bootstrap credentials in source code.
 
-Storefront and admin are separate Auth.js deployments with distinct cookie names. `AUTH_SECRET` may be shared; `AUTH_URL` is per app.
+## 6.4 Cookie isolation
+
+| App | AUTH_URL | Cookie |
+|---|---|---|
+| storefront | STOREFRONT_URL | `bommastock.storefront.session` |
+| admin | ADMIN_URL | `bommastock.admin.session` |
+
+Database sessions, 14-day max age. `AUTH_SECRET` may be shared.
 
 ---
 
@@ -155,7 +164,7 @@ Failure: keep master, job FAILED with error fields, asset FAILED. Retry inserts 
 
 Publish when READY, real title (not `Untitled Asset`), category, ≥1 tag, MASTER, WATERMARKED_PREVIEW, exactly one default active `AssetLicense`.
 
-Storefront: `PUBLISHED` + `READY`. Parent category pages include descendant category assets.
+Storefront: `PUBLISHED` + `READY` and category (and ancestors) `ACTIVE`. Parent category pages include descendant category assets. Inactive category hides those assets from discovery without changing `productStatus`.
 
 Unpublish → `DRAFT`, clear `publishedAt`. Archive → `ARCHIVED`. Purchases remain downloadable.
 
@@ -183,22 +192,29 @@ Checkout requires `requireUser` (CUSTOMER). Guest must log in first (cart alread
 Buy Now uses the same `CheckoutService` with one in-memory line.
 
 ```text
-CheckoutService.create
+CheckoutService.create({ userId, items, idempotencyKey })
+  → return existing Order if (userId, idempotencyKey) already exists
   → load items
-  → validate availability (PUBLISHED + READY, license active)
+  → validate availability (PUBLISHED + READY, license active, category active)
   → load live AssetLicense.pricePaise (GST-inclusive)
   → if live price ≠ quotedUnitPriceIncludingTaxPaise:
        return PRICE_CHANGED with the new inclusive price
        do not create Order or Razorpay order
   → after customer confirms, quotes are updated and checkout is resubmitted
   → compute tax with round-half-up from the single ACTIVE TaxRate
-  → create Order PENDING with immutable OrderItem snapshots
+  → create Order PENDING with immutable OrderItem snapshots + idempotencyKey
   → create Payment PENDING
-  → create Razorpay order for totalPaise INR
-  → return Razorpay checkout payload
+  → if totalPaise === 0: mark Payment CAPTURED and Order PAID (no Razorpay)
+  → else: create Razorpay order (payment_capture: 1, receipt = orderNumber)
+  → return Razorpay checkout payload or paid confirmation
 ```
 
 Never trust browser prices.
+
+Storefront payment routes:
+
+- `POST /api/payments/razorpay/verify`
+- `POST /api/payments/razorpay/webhook`
 
 ---
 
@@ -223,7 +239,7 @@ Failed attempt → Payment FAILED, Order FAILED. No entitlement. Customer starts
 
 Explicit cancel or 30-minute unpaid expiry → Payment CANCELLED, Order CANCELLED.
 
-Refund (Razorpay refund + webhook) → Payment REFUNDED, Order REFUNDED, entitlement revoked. Audit the mutation.
+Refund: admin full refund via Razorpay (MVP). Webhook `refund.processed` → Payment REFUNDED, Order REFUNDED, entitlement revoked. Audit `ORDER_REFUND`. Partial refunds are out of MVP.
 
 ---
 
@@ -239,7 +255,7 @@ requireUser
 → Payment.status === CAPTURED
 → entitlement = this OrderItem license snapshot (not live AssetLicense.isActive)
 → resolve MASTER storageKey server-side
-→ signedUrl GET, 300s
+→ signedUrl GET, 300s, Content-Disposition filename `{assetCode}_{licenseCode}.{ext}`
 → insert Download
 → return { url: signedUrl, expiresInSeconds: 300 }
 ```
@@ -263,6 +279,8 @@ Two R2 buckets. PostgreSQL stores `storageKey`.
 
 `publicUrl` = `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` + public key path. That URL is not a private key leak.
 
+Private-bucket CORS: `ADMIN_URL` only, PUT/GET/HEAD. Public bucket: GET/HEAD from storefront and admin. Multipart when upload size > 100 MiB.
+
 ---
 
 # 16. Database Architecture
@@ -279,8 +297,9 @@ Vercel          apps/admin (+ /api/inngest)
 Neon            PostgreSQL
 Cloudflare R2   private + public buckets
 Cloudflare CDN  public derivatives only
-Inngest         processing orchestration
+Inngest         processing + unpaid-order expiry cron
 Razorpay        payments
+Resend          password-reset email
 ```
 
 ---
@@ -291,6 +310,7 @@ Razorpay        payments
 |---|---|---|
 | Database | `DATABASE_URL` | — |
 | Auth | `AUTH_SECRET`, `AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD` | — |
+| Email | `RESEND_API_KEY`, `EMAIL_FROM` | — |
 | R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `R2_ENDPOINT` | `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` |
 | Payments | `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | `NEXT_PUBLIC_RAZORPAY_KEY_ID` |
 | App URLs | `STOREFRONT_URL`, `ADMIN_URL` | — |

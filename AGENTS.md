@@ -1,8 +1,8 @@
 # Bommastock — Project Constitution
 
-Version: Phase 0.1 (locked)
+Version: Phase 0.2 (locked)
 
-This file is the highest-level project constitution. Implementation must follow it. Detailed schemas, flows, and security rules live in `/docs`. If a lower-level document conflicts with this constitution, stop and resolve the conflict before writing code.
+This file is the highest-level project constitution. Implementation must follow it. Detailed schemas, flows, and security rules live in `/docs`. Phase 0.2 locks live in `/docs/DECISIONS.md`. If a lower-level document conflicts with this constitution or a LOCKED decision, stop and resolve the conflict before writing code.
 
 ---
 
@@ -108,6 +108,8 @@ Locked for MVP:
 | Image processing | Sharp in `packages/image-processing` |
 | Jobs | Asynchronous worker invoked by Inngest |
 | Payments | Razorpay Orders + webhooks |
+| Email | Resend (password reset) |
+| Password hashing | Argon2id |
 | Hosting | Vercel for both apps |
 
 Do not use Supabase Auth. Do not use Stripe in MVP. Do not add Elasticsearch, OpenSearch, or Algolia in MVP.
@@ -134,7 +136,7 @@ Do not place business logic directly inside UI components.
 
 Do not duplicate business logic between Admin and Storefront.
 
-Shared business logic lives in reusable packages.
+Shared business logic lives in reusable packages (`packages/commerce` for cart/checkout/entitlement/publish).
 
 Apps may import packages. Packages must not import apps.
 
@@ -412,7 +414,7 @@ MVP seeds the `STANDARD` license. Additional licenses (Extended, Editorial, Comm
 
 Every published asset has exactly one default active `AssetLicense`. Add to cart without an explicit license uses that default.
 
-Catalog `pricePaise` is GST-inclusive. The server calculates checkout amounts. `OrderItem` stores an immutable tax-aware price snapshot.
+Catalog `pricePaise` is GST-inclusive. `pricePaise = 0` is allowed. The server calculates checkout amounts. `OrderItem` stores an immutable tax-aware price snapshot. Phase 0.2 details: `/docs/DECISIONS.md`.
 
 ---
 
@@ -434,6 +436,7 @@ Auth.js + Prisma adapter. One `User` model. Roles: `CUSTOMER` | `ADMIN`.
 
 Authoritative documents:
 
+- `/docs/DECISIONS.md`
 - `/docs/PRODUCT_REQUIREMENTS.md`
 - `/docs/ARCHITECTURE.md`
 - `/docs/DATABASE.md`

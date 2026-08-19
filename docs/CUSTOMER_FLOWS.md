@@ -22,7 +22,7 @@ Homepage copy is static or application configuration. No CMS.
 
 # 2. Authentication
 
-Email and password (Auth.js Credentials). OAuth is not in MVP. Email verification is not required for checkout.
+Email and password (Auth.js Credentials). Storefront social login: Google, Microsoft Entra ID (Outlook), and Apple. OAuth users are created/linked as `CUSTOMER` only. Email verification is not required for checkout.
 
 Browsing, search, category, detail, and **guest cart** are available without login.
 
@@ -211,4 +211,4 @@ Clear errors for: unavailable image, **price changed**, payment failure, login f
 
 # 19. Future
 
-Wishlist, collections, reviews, coupons, subscriptions, credits, visual search, OAuth.
+Wishlist, collections, reviews, coupons, subscriptions, credits, visual search.

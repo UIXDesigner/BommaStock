@@ -88,7 +88,7 @@ Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`
 
 ## 6.1 Customer
 
-Email/password (Credentials). Argon2id hashes. Change-password and forgot-password are MVP (D027). OAuth later. Email verification not required for MVP checkout.
+Email/password (Credentials). Argon2id hashes. Change-password and forgot-password are MVP (D027). Storefront social login: Google, Microsoft Entra ID (Outlook), and Apple. OAuth creates/links `CUSTOMER` users only. Email verification not required for MVP checkout.
 
 Guest cart cookie (`guestToken`) is allowed before login. On login, merge guest cart into the user cart.
 
@@ -309,7 +309,7 @@ Resend          password-reset email
 | Category | Server-only | Public |
 |---|---|---|
 | Database | `DATABASE_URL` | — |
-| Auth | `AUTH_SECRET`, `AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD` | — |
+| Auth | `AUTH_SECRET`, `AUTH_URL`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_MICROSOFT_ID`, `AUTH_MICROSOFT_SECRET`, `AUTH_MICROSOFT_TENANT_ID`, `AUTH_APPLE_ID`, `AUTH_APPLE_SECRET` | — |
 | Email | `RESEND_API_KEY`, `EMAIL_FROM` | — |
 | R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PRIVATE_BUCKET`, `R2_PUBLIC_BUCKET`, `R2_ENDPOINT` | `NEXT_PUBLIC_R2_PUBLIC_BASE_URL` |
 | Payments | `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | `NEXT_PUBLIC_RAZORPAY_KEY_ID` |
@@ -342,4 +342,4 @@ No CMS. Static/application configuration plus newest published assets.
 
 # 21. Out of MVP
 
-Contributor marketplace, coupons, wishlist, reviews, subscriptions, credits, AI tagging, visual search, mobile apps, public API, Stripe, Elasticsearch, advanced CMS, in-place master replace, OAuth.
+Contributor marketplace, coupons, wishlist, reviews, subscriptions, credits, AI tagging, visual search, mobile apps, public API, Stripe, Elasticsearch, advanced CMS, in-place master replace.

@@ -16,7 +16,7 @@ Assume every client request can be manipulated. Prices, payment status, and down
 
 Auth.js + Prisma adapter. Database sessions. One `User` table. Roles: `CUSTOMER`, `ADMIN`. No Supabase Auth.
 
-- Customer: email/password. Argon2id. Change-password and forgot-password are MVP. OAuth later. Email verification not required for MVP checkout.
+- Customer: email/password. Argon2id. Change-password and forgot-password are MVP. Storefront social login (Google, Outlook/Microsoft, Apple) creates/links `CUSTOMER` users only. Admin remains credentials-only. Email verification not required for MVP checkout.
 - Guest cart allowed; checkout requires login.
 - No public admin registration.
 - First admin: env/CLI bootstrap (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`). Refuse if an admin exists. Credentials never in source.

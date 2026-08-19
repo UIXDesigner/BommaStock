@@ -424,7 +424,7 @@ Auth.js + Prisma adapter. One `User` model. Roles: `CUSTOMER` | `ADMIN`.
 
 - Customer registration/login is public (email and password via Auth.js Credentials).
 - Guest cart is allowed; merge into the customer cart on login.
-- OAuth social login is future scope.
+- Storefront social login: Google, Microsoft Entra ID (Outlook), and Apple. OAuth users are CUSTOMER only. Admin remains credentials-only; there is no public admin registration.
 - Email verification is not required for MVP checkout.
 - There is no public admin registration.
 - Admins are provisioned by a secure seed/bootstrap process. Bootstrap credentials are environment/CLI only, never source code.

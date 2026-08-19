@@ -1,0 +1,13 @@
+node_modules
+.pnpm-store
+.turbo
+.next
+dist
+out
+coverage
+pnpm-lock.yaml
+packages/database/src/generated
+*.tsbuildinfo
+.git
+docs
+AGENTS.md

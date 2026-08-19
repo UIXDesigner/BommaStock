@@ -1,0 +1,492 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProcessingStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AssetOrientation {
+  LANDSCAPE
+  PORTRAIT
+  SQUARE
+}
+
+enum AssetFileClass {
+  MASTER
+  THUMBNAIL
+  WATERMARKED_PREVIEW
+  WORKING_PREVIEW
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LicenseStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  RAZORPAY
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum ImageProcessingJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum TaxRateStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DailySequenceKind {
+  ASSET_CODE
+  ORDER_NUMBER
+}
+
+model User {
+  id               String     @id @default(cuid())
+  name             String?
+  email            String     @unique
+  emailVerified    DateTime?
+  image            String?
+  passwordHash     String?
+  role             UserRole   @default(CUSTOMER)
+  status           UserStatus @default(ACTIVE)
+  phone            String?
+  termsAcceptedAt  DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  carts          Cart[]
+  orders         Order[]
+  downloads      Download[]
+  favorites      Favorite[]
+  auditLogs      AuditLog[]
+  address        Address?
+  billingProfile BillingProfile?
+}
+
+model Address {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  country    String   @default("IN") @db.Char(2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BillingProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  invoiceName String?
+  gstin       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Category {
+  id          String         @id @default(cuid())
+  name        String
+  slug        String         @unique
+  parentId    String?
+  description String?
+  status      CategoryStatus @default(ACTIVE)
+  sortOrder   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryTree")
+  assets   Asset[]
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets AssetTag[]
+}
+
+model Asset {
+  id               String           @id @default(cuid())
+  code             String           @unique
+  title            String           @default("Untitled Asset")
+  slug             String           @unique
+  description      String?          @db.Text
+  categoryId       String?
+  processingStatus ProcessingStatus @default(UPLOADED)
+  productStatus    ProductStatus    @default(DRAFT)
+  width            Int?
+  height           Int?
+  orientation      AssetOrientation?
+  format           String?
+  mimeType         String?
+  fileSizeBytes    BigInt?
+  publishedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  category          Category?            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  tags              AssetTag[]
+  files             AssetFile[]
+  licenses          AssetLicense[]
+  processingJobs    ImageProcessingJob[]
+  cartItems         CartItem[]
+  orderItems        OrderItem[]
+  downloads         Download[]
+  favorites         Favorite[]
+
+  @@index([productStatus, processingStatus, publishedAt(sort: Desc)])
+  @@index([categoryId])
+}
+
+model AssetTag {
+  assetId String
+  tagId   String
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Restrict)
+
+  @@id([assetId, tagId])
+}
+
+model AssetFile {
+  id         String         @id @default(cuid())
+  assetId    String
+  fileClass  AssetFileClass
+  storageKey String         @unique
+  bucket     String
+  mimeType   String
+  extension  String
+  width      Int?
+  height     Int?
+  sizeBytes  BigInt
+  isPublic   Boolean        @default(false)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([assetId, fileClass])
+}
+
+model License {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String
+  description String?
+  terms       String?       @db.Text
+  status      LicenseStatus @default(ACTIVE)
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  assetLicenses AssetLicense[]
+  orderItems    OrderItem[]
+  downloads     Download[]
+}
+
+model AssetLicense {
+  id         String   @id @default(cuid())
+  assetId    String
+  licenseId  String
+  pricePaise Int
+  currency   String   @default("INR") @db.Char(3)
+  isActive   Boolean  @default(true)
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  asset     Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  license   License    @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+  cartItems CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([assetId, licenseId])
+  @@index([assetId, isActive])
+}
+
+model TaxRate {
+  id        String        @id @default(cuid())
+  name      String        @default("GST")
+  rateBps   Int
+  status    TaxRateStatus @default(INACTIVE)
+  currency  String        @default("INR") @db.Char(3)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model DailySequence {
+  id        String            @id @default(cuid())
+  dateKey   String
+  kind      DailySequenceKind
+  lastValue Int               @default(0)
+  updatedAt DateTime          @updatedAt
+
+  @@unique([dateKey, kind])
+}
+
+model Cart {
+  id         String   @id @default(cuid())
+  userId     String?  @unique
+  guestToken String?  @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items CartItem[]
+}
+
+model CartItem {
+  id                                 String   @id @default(cuid())
+  cartId                             String
+  assetId                            String
+  assetLicenseId                     String
+  quotedUnitPriceIncludingTaxPaise   Int
+  currency                           String   @default("INR") @db.Char(3)
+  createdAt                          DateTime @default(now())
+  updatedAt                          DateTime @updatedAt
+
+  cart         Cart         @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetLicense AssetLicense @relation(fields: [assetLicenseId], references: [id], onDelete: Restrict)
+
+  @@unique([cartId, assetId, assetLicenseId])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  assetId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assetId])
+  @@index([userId, createdAt])
+}
+
+model Order {
+  id                      String      @id @default(cuid())
+  orderNumber             String      @unique
+  idempotencyKey          String
+  userId                  String
+  status                  OrderStatus @default(PENDING)
+  subtotalBeforeTaxPaise  Int
+  taxRateBps              Int
+  taxPaise                Int
+  totalPaise              Int
+  currency                String      @default("INR") @db.Char(3)
+  paidAt                  DateTime?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items    OrderItem[]
+  payments Payment[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                         String   @id @default(cuid())
+  orderId                    String
+  assetId                    String
+  licenseId                  String
+  assetLicenseId             String
+  assetTitle                 String
+  licenseName                String
+  unitPriceBeforeTaxPaise    Int
+  taxRateBps                 Int
+  taxPaise                   Int
+  unitPriceIncludingTaxPaise Int
+  quantity                   Int      @default(1)
+  lineTotalPaise             Int
+  currency                   String   @default("INR") @db.Char(3)
+  createdAt                  DateTime @default(now())
+
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  license      License      @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+  assetLicense AssetLicense @relation(fields: [assetLicenseId], references: [id], onDelete: Restrict)
+  downloads    Download[]
+
+  @@unique([orderId, assetId, assetLicenseId])
+  @@index([assetId])
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  orderId           String
+  provider          PaymentProvider @default(RAZORPAY)
+  providerOrderId   String?
+  providerPaymentId String?         @unique
+  providerStatus    String?
+  status            PaymentStatus   @default(PENDING)
+  amountPaise       Int
+  currency          String          @default("INR") @db.Char(3)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerOrderId])
+  @@index([orderId])
+}
+
+model Download {
+  id          String   @id @default(cuid())
+  userId      String
+  orderItemId String
+  assetId     String
+  licenseId   String
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  asset     Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  license   License   @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([orderItemId])
+}
+
+model ImageProcessingJob {
+  id           String                    @id @default(cuid())
+  assetId      String
+  status       ImageProcessingJobStatus  @default(QUEUED)
+  attempt      Int
+  errorCode    String?
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([assetId, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

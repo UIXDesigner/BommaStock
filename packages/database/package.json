@@ -1,0 +1,33 @@
+{
+  "name": "@bommastock/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "tsx prisma/seed.ts",
+    "studio": "prisma studio",
+    "validate": "prisma validate",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bommastock/config": "workspace:*",
+    "@bommastock/types": "workspace:*",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "dotenv": "^17.2.1",
+    "prisma": "^7.9.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

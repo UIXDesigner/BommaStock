@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Next.js
+.next
+out
+.vercel
+
+# Turbo / builds
+.turbo
+dist
+coverage
+*.tsbuildinfo
+
+# Prisma generated client (regenerated via postinstall)
+packages/database/src/generated
+
+# Logs and OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Test / misc
+.cache
+tmp
+temp

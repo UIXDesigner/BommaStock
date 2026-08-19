@@ -1,0 +1,35 @@
+{
+  "name": "bommastock",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:storefront": "pnpm --filter @bommastock/storefront dev",
+    "dev:admin": "pnpm --filter @bommastock/admin dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @bommastock/database generate",
+    "db:migrate": "pnpm --filter @bommastock/database migrate",
+    "db:seed": "pnpm --filter @bommastock/database seed",
+    "db:studio": "pnpm --filter @bommastock/database studio",
+    "db:validate": "pnpm --filter @bommastock/database validate",
+    "postinstall": "pnpm db:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "@types/node": "^24.3.0",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
+    "turbo": "^2.10.10",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0"
+  }
+}
